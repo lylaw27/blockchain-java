@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+option java_package = "com.example.modular_blockchain";
+option java_multiple_files = true;
+
+service Node{
+  rpc HandleTransaction(Transaction) returns (Void){};
+  rpc Handshake(Version) returns (Version){};
+  rpc HandleBlock(Block) returns (Void){};
+  rpc HandleBalance(WalletInfo) returns (UTXOList){}
+}
+
+message Version {
+  uint32 version = 1;
+  int32 height = 2;
+  string listenAddr = 3;
+  repeated string peerList = 4;
+}
+
+message Void{ }
+
+message Block{
+  Header header = 1;
+  repeated Transaction transactions = 2;
+}
+
+message Header{
+  string prevHash = 1;
+  string rootHash = 2;
+  int64 timestamp = 3;
+  uint32 nonce = 4;
+  int32 difficulty = 5;
+}
+
+message TxInput{
+  string prevTxHash = 1;
+  optional uint32 prevOutIndex = 2;
+  string publicKey = 3;
+  string signature = 4;
+  bool coinbase = 5;
+}
+
+message TxOutput{
+  int64 amount = 1;
+  string address = 2;
+}
+
+message Transaction {
+  string TxID = 1;
+  repeated TxInput inputs = 2;
+  repeated TxOutput outputs = 3;
+}
+
+message UTXOList{
+  repeated UTXO utxos = 1;
+}
+
+message UTXO{
+  TxOutput output = 1;
+  string ID = 2;
+}
+
+message WalletInfo{
+  string address = 1;
+}
