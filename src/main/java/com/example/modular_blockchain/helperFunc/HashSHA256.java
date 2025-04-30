@@ -1,19 +1,22 @@
-package com.example.modular_blockchain.model;
+package com.example.modular_blockchain.helperFunc;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.ObjectWriter;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.MessageOrBuilder;
+import com.google.protobuf.util.JsonFormat;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
-public class HashSHA256<Obj> {
+import static com.example.modular_blockchain.helperFunc.Encoder.bytesToHex;
+
+public class HashSHA256 {
+
     public static String hash(String input){
         try{
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update(input.getBytes(StandardCharsets.UTF_8));
-            return Encoder.bytesToHex(digest.digest());
+            return Encoder.bytesToHex(digest.digest()).toLowerCase();
         }
             catch (NoSuchAlgorithmException e){
             throw new RuntimeException(e);
@@ -33,24 +36,11 @@ public class HashSHA256<Obj> {
     }
 
 
-    public static String random() {
+    public static <Obj> String hashObject(Obj object){
         try{
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            int num = (int) (Math.random() * 1000000);
-            digest.update(Integer.toString(num).getBytes(StandardCharsets.UTF_8));
-            return Encoder.bytesToHex(digest.digest());
-        }
-        catch (NoSuchAlgorithmException e){
-            throw new RuntimeException(e);
-        }
-    }
-
-    public String hashObject(Obj object){
-        try{
-            ObjectWriter ow = new ObjectMapper().writer().withDefaultPrettyPrinter();
-            String jsonString = ow.writeValueAsString(object);
+            String jsonString = JsonFormat.printer().omittingInsignificantWhitespace().print((MessageOrBuilder) object);
             return hash(jsonString);
-        } catch (JsonProcessingException e) {
+        } catch (InvalidProtocolBufferException e) {
             throw new RuntimeException(e);
         }
     }

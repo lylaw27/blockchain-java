@@ -7,14 +7,16 @@ service Node{
   rpc HandleTransaction(Transaction) returns (Void){};
   rpc Handshake(Version) returns (Version){};
   rpc HandleBlock(Block) returns (Void){};
-  rpc HandleBalance(WalletInfo) returns (UTXOList){}
+  rpc HandleBalance(WalletInfo) returns (UTXOList){};
+  rpc HandleWallet(WalletInfo) returns (Void){}
+  rpc RequestBlock(BlockIndex) returns (Void){};
 }
 
 message Version {
   uint32 version = 1;
   int32 height = 2;
   string listenAddr = 3;
-  repeated string peerList = 4;
+  repeated string peer = 4;
 }
 
 message Void{ }
@@ -26,7 +28,7 @@ message Block{
 
 message Header{
   string prevHash = 1;
-  string rootHash = 2;
+  string merkleRoot = 2;
   int64 timestamp = 3;
   uint32 nonce = 4;
   int32 difficulty = 5;
@@ -37,11 +39,11 @@ message TxInput{
   optional uint32 prevOutIndex = 2;
   string publicKey = 3;
   string signature = 4;
-  bool coinbase = 5;
+  optional bool coinbase = 5;
 }
 
 message TxOutput{
-  int64 amount = 1;
+  optional int64 amount = 1;
   string address = 2;
 }
 
@@ -62,4 +64,9 @@ message UTXO{
 
 message WalletInfo{
   string address = 1;
+}
+
+message BlockIndex{
+  Version version = 1;
+  int32 index = 2;
 }

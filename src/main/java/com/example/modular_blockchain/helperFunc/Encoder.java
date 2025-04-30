@@ -1,10 +1,9 @@
-package com.example.modular_blockchain.model;
+package com.example.modular_blockchain.helperFunc;
 import java.security.KeyFactory;
 import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.X509EncodedKeySpec;
-import java.util.Arrays;
 
 public class Encoder {
     private static final char[] HEX_ARRAY = "0123456789ABCDEF".toCharArray();

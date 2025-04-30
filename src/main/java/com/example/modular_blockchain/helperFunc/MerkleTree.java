@@ -1,18 +1,19 @@
-package com.example.modular_blockchain.model;
+package com.example.modular_blockchain.helperFunc;
 
 import com.example.modular_blockchain.Transaction;
+
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
 
-import static com.example.modular_blockchain.model.HashSHA256.combineHash;
+import static com.example.modular_blockchain.helperFunc.HashSHA256.combineHash;
 
 public class MerkleTree {
 
     public static String GenerateRoot(List<Transaction> txx ) {
         Deque<String> hashQueue = new ArrayDeque<>();
         txx.forEach((tx)->{
-            hashQueue.addLast(HashSHA256.hash(tx.toString()));
+            hashQueue.addLast(HashSHA256.hashObject(tx));
         });
         return CombineLeaf(hashQueue);
     }
