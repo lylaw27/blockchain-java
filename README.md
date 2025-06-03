@@ -2,18 +2,162 @@
 
 ## Overview
 This project implements a Proof of Work (PoW) blockchain in Java with the following key features:
-- Peer-to-peer communication using gRPC
-- Chain reorganization (reorg) handling
+- Peer-to-peer communication using gRPC between nodes
 - Mempool for transaction management
-- Comprehensive transaction and block validation
-- Consensus mechanism based on PoW
+- UTXO model for processing transactions
+- Transaction validation via P2PKH (Pay To Public Key Hash)
+- Comprehensive block validation
+- Consensus mechanism based on PoW (Proof Of Work)
+- Nodes with mining capabilities to extract transactions with highest fees
+- Chain reorganization handling
+- Blockchain Explorer (Frontend Project) to view the current state of the blockchain
 
 ## Features
 
 ### 1. Node-to-Node Communication (gRPC)
-- Uses gRPC for efficient node communication
-- Protocol buffers define message formats for blocks, transactions, and network messages
-- Supports peer discovery and network propagation
+- #### Uses gRPC for efficient node communication
+- #### Protocol buffers define message formats for blocks, transactions, and network messages
+```proto
+syntax = "proto3";
+
+option java_package = "com.example.modular_blockchain";
+option java_multiple_files = true;
+
+service Node{
+  rpc HandleTransaction(Transaction) returns (Void){};
+  rpc Handshake(Version) returns (Version){};
+  rpc HandleBlock(Block) returns (Void){};
+  rpc HandleBalance(WalletInfo) returns (UTXOList){};
+  rpc HandleWallet(WalletInfo) returns (Void){}
+  rpc RequestBlock(BlockIndex) returns (Void){};
+}
+
+message Version {
+  uint32 version = 1;
+  int32 height = 2;
+  string listenAddr = 3;
+  repeated string peer = 4;
+}
+
+message Void{ }
+
+message Block{
+  Header header = 1;
+  repeated Transaction transactions = 2;
+}
+
+message Header{
+  string prevHash = 1;
+  string merkleRoot = 2;
+  int64 timestamp = 3;
+  uint32 nonce = 4;
+  int32 difficulty = 5;
+}
+
+message TxInput{
+  string prevTxHash = 1;
+  optional uint32 prevOutIndex = 2;
+  string publicKey = 3;
+  string signature = 4;
+  optional bool coinbase = 5;
+}
+
+message TxOutput{
+  optional int64 amount = 1;
+  string address = 2;
+}
+
+message Transaction {
+  string TxID = 1;
+  repeated TxInput inputs = 2;
+  repeated TxOutput outputs = 3;
+}
+
+message UTXOList{
+  repeated UTXO utxos = 1;
+}
+
+message UTXO{
+  TxOutput output = 1;
+  string ID = 2;
+}
+
+message WalletInfo{
+  string address = 1;
+}
+
+message BlockIndex{
+  Version version = 1;
+  int32 index = 2;
+}
+```
+
+- #### Supports peer discovery and network propagation
+```java
+//Initiate connection to a node
+public boolean connect(String peer){
+
+        //Setup gRPC Channel
+        ManagedChannel channel = ManagedChannelBuilder.forAddress("127.0.0.1", Integer.parseInt(peer)).usePlaintext().build();
+        NodeGrpc.NodeBlockingStub stub = NodeGrpc.newBlockingStub(channel);
+
+        //Prepare Peer List
+        peers.forEach((k,v)->{
+            version.addPeer(v.getListenAddr());
+        });
+        try{
+            //Attempt to connect to peer
+            Version peerVer = stub.handshake(version.build());
+
+            //Add peer to peer list
+            addPeer(peerVer);
+
+            //Check if peer has a longer chain, if yes request for blocks
+            checkIncomingHeight(peerVer);
+        }
+        catch (StatusRuntimeException e){
+            System.out.println("Peer does not exist");
+            return false;
+        }
+        finally{
+            channel.shutdown();
+        }
+        return true;
+    }
+
+    //Add peer to the peer list and connect to other peers in the peer list
+    public void addPeer(Version peerVer){
+
+        //Add peer to peer list
+        peers.putIfAbsent(peerVer.getListenAddr(),peerVer);
+        System.out.println(version.getListenAddr() + " connected to peer " + peerVer.getListenAddr());
+
+        //Peer Discovery - connect to other peers in the peer list
+        peerVer.getPeerList().forEach(addr->{
+
+        //Connect to other peers if it is not the same as this node's address and not already in the peer list
+        if(!Objects.equals(version.getListenAddr(),addr) && !peers.containsKey(addr)){
+            this.connect(addr);
+        }});
+    }
+
+   //gRPC endpoint for handshake
+    @Override
+    public void handshake(Version request, StreamObserver<Version> responseObserver){
+
+        //Send information of this node as response 
+        responseObserver.onNext(node.getVersion().build());
+        responseObserver.onCompleted();
+
+        //Add node that sends incoming request to peer list
+        node.addPeer(request);
+
+        //Add all peers of the node that sends incoming request to peer list
+        node.getPeers().forEach((k,v)->{
+            node.getVersion().addPeer(v.getListenAddr());
+        });
+    }
+```
 
 ### 2. Chain Reorganization
 - Handles forks in the blockchain
