@@ -1,16 +1,18 @@
 # Proof of Work Blockchain in Java
 
 ## Overview
-This project implements a Proof of Work (PoW) blockchain in Java with the following key features:
-- Peer-to-peer communication using gRPC between nodes
-- Mempool for transaction management
-- UTXO model for processing transactions
-- Transaction validation via P2PKH (Pay To Public Key Hash)
+
+A full-featured Proof of Work (PoW) blockchain implementation in Java, designed for learning and experimentation. This project demonstrates modern blockchain principles including: 
+
+- Mining with transaction fee prioritization
+- Transaction validation via P2PKH
+- UTXO transaction model
 - Comprehensive block validation
-- Consensus mechanism based on PoW (Proof Of Work)
-- Nodes with mining capabilities to extract transactions with highest fees
-- Chain reorganization handling
-- Blockchain Explorer (Frontend Project) to view the current state of the blockchain
+- Mempool for transaction management
+- Peer-to-peer communication using gRPC between nodes
+- Use of multithreading to process mining and network requests concurrently
+- Robust chain reorganization handling
+- Blockchain Explorer (Frontend Project) to enquire the current state of the blockchain
 
 ## Features
 
@@ -158,31 +160,507 @@ public boolean connect(String peer){
         });
     }
 ```
+### 2. Proof Of Work Mining
+- #### Extract transactions from the mempool based on fees:
 
-### 2. Chain Reorganization
-- Handles forks in the blockchain
-- Automatically switches to the longest valid chain
-- Reverts transactions from orphaned blocks and applies new ones
+- #### Generate Merkle Root with the sorted transaction list:
+```java
+public class MerkleTree {
 
-### 3. Mempool System
-- Temporarily stores unconfirmed transactions
-- Implements transaction prioritization
-- Handles duplicate transaction detection
-- Supports transaction expiration
+    //Generate the Merkle root from a list of transactions
+    public static String GenerateRoot(List<Transaction> txx ) {
+        Deque<String> hashQueue = new ArrayDeque<>();
 
-### 4. Validation System
-- *Block Validation*:
-  - Proof of Work difficulty verification
-  - Merkle root validation
-  - Block size limits
-  - Timestamp validation
-  - Previous block hash verification
+        //Hash each transaction and add it to the queue
+        txx.forEach((tx)->{
+            hashQueue.addLast(HashSHA256.hashObject(tx));
+        });
+        
+        return CombineLeaf(hashQueue);
+    }
 
-- *Transaction Validation*:
-  - Digital signature verification
-  - Input/output validation
-  - Double-spend prevention
-  - Fee verification
+    public static String CombineLeaf(Deque<String> hashQueue) {
+
+        //Return if one leaf is left in the queue
+        if(hashQueue.size() == 1){
+            return hashQueue.getFirst();
+        }
+
+        //Add a copy of the last node to the queue if size is odd number
+        if(hashQueue.size()% 2 == 1){
+            hashQueue.addLast(hashQueue.peekLast());
+        }
+
+        int queueSize = hashQueue.size();
+        //Remove pairs of hashes and combine them, then add them back into the queue
+        for(int i = 0; i < queueSize/2; i++){
+            String firstHash = hashQueue.removeFirst();
+            String secondHash = hashQueue.removeFirst();
+            hashQueue.addLast(combineHash(firstHash, secondHash));
+        }
+
+        //Recurse until one hash is left
+        return CombineLeaf(hashQueue);
+    }
+}
+```
+- #### Increment nonce on every attempt and hash the block header until the required target is reached
+- #### Broadcast the block once mining is completed
+- #### Full mining function:
+```java
+ //We assume every node only has one ongoing mining process
+    public synchronized void startMining() {
+
+        //Mining difficulty can be set in Config.java
+        int difficulty = Config.DIFFICULTY.value;
+
+        //Start with a random nonce
+        int nonce = (int)(Math.random()*1000000);
+
+        //Target is a string of 0s with length of difficulty
+        //e.g. difficulty = 4, target = "0000"
+        String target = new String(new char[difficulty]).replace("\0", "0");
+
+        //Extract transactions from the mempool based on fees
+        LinkedList<Transaction> sortedTxList = new LinkedList<>(sortTransactions(pool.getTxPool(),pool.getPoolUTXO()));
+        
+        //Create a Coinbase Transaction and add it to the front of the transaction list
+        Transaction coinbaseTx = createCoinbaseTx();
+        sortedTxList.addFirst(coinbaseTx);
+
+        //Generate Merkle Root with the sorted transaction list
+        String merkleRoot = MerkleTree.GenerateRoot(sortedTxList);
+
+        //Get the previous block's hash
+        String prevHash = chain.getRecentHash();
+
+        //Build the block header
+        Header.Builder header = Header.newBuilder()
+                .setMerkleRoot(merkleRoot)
+                .setTimestamp(Instant.now().getEpochSecond())
+                .setNonce(nonce)
+                .setPrevHash(prevHash)
+                .setDifficulty(difficulty);
+
+        //Starts mining
+        mining = true;
+        while(mining){
+            
+            //Hash the header and check if it meets the target
+            String attempt = HashSHA256.hashObject(header);
+            if(attempt.substring(0,difficulty).equals(target)){
+                break;
+            }
+
+            //Increment nonce on every attempt
+            header.setNonce(nonce++);
+
+            //Sleep for 1ms to reduce CPU usage
+            try {
+                Thread.sleep(1);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        //Broadcast block if this node is first to mine
+        if(mining){
+            //Build Block
+            Block.Builder block = Block.newBuilder().setHeader(header);
+            sortedTxList.forEach(block::addTransactions);
+
+            //Validate block then broadcast it
+            try{
+                if(chain.validateBlock(blockRequest)){
+                    broadcastBlock(block.build());
+                }
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+```
+### 2. Transaction Validation System
+
+  - #### P2PKH pattern to validate transaction inputs
+  - #### Elliptic Curve Digital Signature Algorithm to check for transaction authenticity
+  - #### Double-spend prevention with UTXO model
+  - #### Fee verification by checking if output amount is more than input amount
+  ```java
+  public boolean validateTx(Transaction tx, HashMap<String,TxOutput> tempUTXO) {
+        AtomicLong inputAmount = new AtomicLong();
+        AtomicLong outputAmount = new AtomicLong();
+
+        //Remove signature field for digital signature verification
+        Transaction.Builder unsignedTx = tx.toBuilder().clearInputs();
+        tx.getInputsList().forEach(txInput -> {
+            unsignedTx.addInputs(txInput.toBuilder().clearSignature().build());
+        });
+
+        //Hash Transaction Data for signature verification
+        byte[] txData = HashSHA256.hashObject(unsignedTx).getBytes();
+
+        //Validate Every Transaction Input
+        for(TxInput input : tx.getInputsList()){
+            
+            String prevOutputKey = input.getPrevTxHash() + ":" + input.getPrevOutIndex();
+
+            // Check if UTXO exists to prevent double spending
+            if(tempUTXO.containsKey(prevOutputKey)){
+                inputAmount.addAndGet(tempUTXO.get(prevOutputKey).getAmount());
+            }
+            else{
+                System.out.println("UTXO not found");
+                System.out.println(prevOutputKey);
+                return false;
+            }
+
+            //P2PKH pattern to validate Transaction Inputs
+            //Hash public key to get address
+            String inputAddress = HashSHA256.hash(input.getPublicKey());
+
+            // Check if UTXO address matches with Transaction Input address
+            if(!tempUTXO.get(prevOutputKey).getAddress().equals(inputAddress)){
+                System.out.println("Public Key not matching with address!");
+                return false;
+            }
+
+            // Prepare TxData for verify signature
+            String txSign = input.getSignature();
+
+            // Check if signature in TxInput can be unlocked with PubKey
+            try {
+                Signature sign = Signature.getInstance("SHA256withECDSA");
+                sign.initVerify(hexToKey(input.getPublicKey()));
+                sign.update(txData);
+                if(!sign.verify(Encoder.hexToBytes(txSign))){
+                    System.out.println("Invalid Signature");
+                    return false;
+                }
+            } catch (SignatureException | NoSuchAlgorithmException | InvalidKeyException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        //Check if Output amount exceeds Input amount
+        tx.getOutputsList().forEach(txOutput -> {
+            outputAmount.addAndGet(txOutput.getAmount());
+        });
+        if(inputAmount.get()<outputAmount.get()){
+            return false;
+        }
+
+        //Remove spent Tx from UTXO set
+        tx.getInputsList().forEach(txInput -> {
+            String prevOutputKey = txInput.getPrevTxHash() + ":" + txInput.getPrevOutIndex();
+            tempUTXO.remove(prevOutputKey);
+        });
+
+        //add Tx Outputs to UTXO set if Tx is valid
+        String TxID = HashSHA256.hashObject(tx);
+        for(int i=0;i<tx.getOutputsList().size();i++){
+            String prevOutputKey = TxID + ":" + i;
+            tempUTXO.put(prevOutputKey,tx.getOutputsList().get(i));
+        }
+        return true;
+    }
+  ```
+### 3. Block Validation:
+  - #### Merkle root validation
+  - #### Proof of Work difficulty verification
+  - #### Timestamp validation
+  - #### Coinbase Transaction validation
+  - #### Validate all transactions in the block
+```java
+public boolean validateBlock(Block incomingBlock) throws Exception {
+        //Create a Copy of temporary tx storage for validation
+        String newBlockHash = HashSHA256.hashObject(incomingBlock.getHeader());
+        LinkedList<Transaction> txList = new LinkedList<>(incomingBlock.getTransactionsList());
+
+        //Check if Merkle Root is Valid
+        String merkleRoot = MerkleTree.GenerateRoot(txList);
+        if(!incomingBlock.getHeader().getMerkleRoot().equals(merkleRoot)){
+            throw new Exception("Invalid Merkle Root!");
+        }
+
+        //Check if Block difficulty is valid
+        if(!incomingBlock.getHeader().getDifficulty().equals(Config.DIFFICULTY.value)){
+            throw new Exception("Invalid Block Difficulty!");
+        }
+
+        //Check if Block timestamp is larger than previous block timestamp and smaller than current time
+        if(height != -1 && incomingBlock.getHeader().getTimestamp() <= blockList.getLast().getHeader().getTimestamp() && 
+        incomingBlock.getHeader().getTimestamp() > Instant.now().getEpochSecond())
+        ){
+            throw new Exception("Invalid Block Timestamp!");
+        }
+
+        //Check if coinbase Tx is valid
+        Transaction coinbaseTx = txList.removeFirst();
+        if(!coinbaseTx.getInputs(0).getCoinbase() && coinbaseTx.getOutputs(0).getAmount() != Config.COINBASE_TX_AMOUNT.value){
+            throw new Exception("Invalid Coinbase Tx!");
+        }
+
+        //Iterate and Validate all Tx
+        HashMap<String,TxOutput> tempUTXO = new HashMap<>(UTXO);
+        for(Transaction tx:txList){
+            if(!validateTx(tx,tempUTXO)){
+                throw new Exception("Invalid TXs!");
+            }
+        }
+
+        // Add coinbase Tx back to Tx List
+        txList.addFirst(coinbaseTx);
+
+        //if block is valid, update the Transaction map + UTXO
+        storeTransaction(newBlockHash,txList);
+        return true;
+    }
+```
+### 4. Chain Reorganization
+- #### Handles forks in the blockchain:
+```java
+//Create a new fork if the incoming block can point to blocks in the main chain
+    public boolean createFork(Block incomingBlock){
+
+        String prevBlockHash = incomingBlock.getHeader().getPrevHash();
+
+        //Check new Block's previous hash can point to blocks in the main chain
+        if(blockMap.containsKey(prevBlockHash)){
+            int forkHeight = getBlockHeight(prevBlockHash);
+            
+            //Incoming Block beyond 6 confirmed blocks will be rejected
+            if(height - forkHeight < 6){
+                
+                //Make a copy of UTXO and rollback to fork height
+                HashMap<String, TxOutput> forkUTXO = new HashMap<>(rollbackUTXO(height,forkHeight,new HashMap<>(UTXO)));
+                
+                //Create Fork and return true
+                fork = new Chain(forkHeight,forkUTXO,blockMap.get(prevBlockHash));
+                return true;
+            }
+        }
+
+        //If no valid fork can be created, return false
+        return false;
+    }
+
+    public boolean extendFork(Block incomingBlock){
+
+        //Validate block in fork chain if there is any
+        if(fork != null){
+            try{
+                if(fork.validateHeader(incomingBlock) && fork.validateBlock(incomingBlock)){
+                    fork.appendBlock(incomingBlock);
+                    return true;
+                }
+            }
+            catch(Exception e){
+                System.out.println(e.getMessage());
+            }
+        }
+        return false;
+    }
+```
+- #### Algorithm to rollback UTXO storage:
+```java
+//Reverse UTXO to desired block height
+    public HashMap<String, TxOutput> rollbackUTXO(int currHeight,int targetHeight,HashMap<String, TxOutput> prevUTXO){
+        
+        //Rollback is completed if current block height reaches target block height
+        if(currHeight<=targetHeight){
+            return prevUTXO;
+        }
+
+        Block block = blockList.get(currHeight);
+        List<Transaction> txList = block.getTransactionsList();
+
+        //Revert UTXO for all transactions in the current block
+        for(Transaction tx:txList){
+            String TxID = HashSHA256.hashObject(tx);
+            for(TxInput input:tx.getInputsList()){
+                String UTXOkey = input.getPrevTxHash() + ":" + input.getPrevOutIndex();
+
+                //Add to back UTXOs for outputs outside of current block
+                if(!input.getCoinbase() && txMap.containsKey(input.getPrevTxHash())){
+                    String txKey = txMap.get(input.getPrevTxHash());
+                    Block prevBlock = blockMap.get(txKey.substring(0,64));
+                    Transaction prevTx = prevBlock.getTransactions(Integer.parseInt(txKey.substring(65)));
+                    TxOutput prevOutput = prevTx.getOutputs(input.getPrevOutIndex());
+                    prevUTXO.put(UTXOkey,prevOutput);
+                }
+            }
+
+            //Remove all UTXOs for outputs in the current block
+            for(int i=0;i<tx.getOutputsList().size();i++){
+                String key = TxID + ":" + i;
+                prevUTXO.remove(key);
+            }
+        }
+
+        //Recursively rollback to desired block height
+        return rollbackUTXO(currHeight-1,targetHeight,prevUTXO);
+    }
+```
+- #### Automatically switches to the longest valid chain when fork is longer:
+```java
+public ArrayList<Transaction> reorganise(){
+
+        int forkStartHeight = fork.getHeight() - fork.getBlockList().size()+1;
+
+        ArrayList<Transaction> txReorgList = new ArrayList<>();
+
+        //Update UTXO storage with that of fork's
+        UTXO = fork.getUTXO();
+
+        //Remove outdated transactions + blocks
+        for(int i = height;i>forkStartHeight;i--){
+            Block block = removeBlock(i);
+            for(Transaction tx:block.getTransactionsList()){
+                String TxID = HashSHA256.hashObject(tx);
+                txMap.remove(TxID);
+                if(!tx.getInputs(0).getCoinbase()){
+                    txReorgList.add(tx);
+                }
+            }
+        }
+
+        //Insert fork blocks and transactions to main chain
+        for(int i = 1;i<fork.getBlockList().size();i++){
+            Block block = fork.getBlockList().get(i);
+            try {
+                if(validateHeader(block) && validateBlock(block)){
+                    appendBlock(block);
+                }
+            } catch (Exception e) {
+                System.out.println("Chain" + ":" + e.getMessage());
+            }
+            for(int j=0;j<block.getTransactionsList().size();j++){
+                txReorgList.remove(block.getTransactions(j));
+            }
+        }
+
+        fork = null;
+
+        //Return any extra transactions from stale blocks for re-mining
+        return txReorgList;
+    }
+```
+- #### Store orphan blocks if can't connect to any chain
+- #### Check if orphan blocks can be reconected to the chain after parent block arrives late:
+```java
+public boolean checkOrphan(){
+        if(orphanBlocks.isEmpty()){
+            return false;
+        }
+        //Run Block Validations if Orphan Block can be appended
+        if(orphanBlocks.containsKey(chain.getRecentHash())){
+            Block block = orphanBlocks.get(chain.getRecentHash());
+            try{
+                //Check if incoming block is extendable to the main chain
+                if(chain.validateHeader(block)){
+                    if(chain.validateBlock(block)){
+                        appendBlock(block);
+                        //Recurse to make sure all orphan blocks
+                        checkOrphan();
+                    }
+                }
+                //Check if incoming block is extendable to the fork chain
+                else if(chain.extendFork(block)){
+                    //Reorganise Chain is Fork Chain is taller than Main Chain
+                    if(chain.fork.getHeight() > chain.height){
+                        chain.reorganise();
+                    }
+                    checkOrphan();
+                }
+            }
+            catch(Exception e){
+                System.out.println("Orphan" + ":" + e.getMessage());
+            }
+            return true;
+        };
+        return false;
+    }
+    public boolean addOrphanBlock(Block incomingBlock){
+        String blockHash = HashSHA256.hashObject(incomingBlock.getHeader());
+        if(orphanBlocks.containsKey(blockHash)){
+            return false;
+        }
+        orphanBlocks.put(blockHash,incomingBlock);
+        return true;
+    }
+```
+- #### Here is the gRPC endpoint that handles incoming blocks:
+```java
+@Override
+    public void handleBlock(Block blockRequest, StreamObserver<Void> responseObserver)  {
+
+        responseObserver.onNext(Void.getDefaultInstance());
+        responseObserver.onCompleted();
+
+        //Make sure one block gets processed each time
+        synchronized (this) {
+            
+            //Hash the block header to get the block hash
+            String blockHash = HashSHA256.hashObject(blockRequest.getHeader());
+            
+            //Check if the block is already in the chain
+            if (!node.getChain().has(blockHash)){
+                node.getChain().getBlockMap().put(blockHash, blockRequest);
+                try{
+
+                    //Check if incoming block is extendable to the main chain
+                    if(node.getChain().validateHeader(blockRequest)){
+                        if(node.getChain().validateBlock(blockRequest)){
+                            node.appendBlock(blockRequest);
+                            wsController.sendBlocks(node);
+                        }
+                    }
+                    else{
+
+                        //Check if incoming block is able to create a fork chain
+                        if(node.getChain().createFork(blockRequest)){
+                            System.out.println(node.getVersion().getListenAddr() + ": Fork created at " + node.getChain().getFork().getHeight());
+                        }
+
+                        //Check if incoming block is extendable to the fork chain
+                        if(node.getChain().extendFork(blockRequest)){
+                            System.out.println(node.getVersion().getListenAddr() + ": added block to fork: " + blockHash);
+
+                            //Reorganise Chain is Fork Chain is taller than Main Chain
+                            node.broadcastBlock(blockRequest);
+                            if(node.getChain().getFork().getHeight() > node.getChain().getHeight()){
+                                ArrayList<Transaction> txReorgList = node.getChain().reorganise();
+                                //Add back unmined transactions to Mempool and broadcast them
+                                for(Transaction tx : txReorgList){
+                                    System.out.println(tx);
+                                    node.getPool().addTx(tx);
+                                    node.broadcastTx(tx);
+                                }
+
+                                node.resetMining();
+                                System.out.println(node.getVersion().getListenAddr() + ": Chain reorganised to height " + node.getChain().getHeight());
+                            }
+                        }
+                        //Store as Orphan Block if block arrived early
+                        else if(node.addOrphanBlock(blockRequest)){
+                            System.out.println(node.getVersion().getListenAddr() + ": Orphan Block is found and stored");
+                        }
+                    }
+
+                    //Check if Orphan Block can be inserted to chains
+                    if(node.checkOrphan()){
+                        System.out.println(node.getVersion().getListenAddr() + ": Orphan Blocks is inserted");
+                    }
+                    node.getVersion().setHeight(node.getChain().getHeight());
+                }
+                catch(Exception e){
+                    System.out.println(node.getVersion().getListenAddr() + ":" + e.getMessage());
+                }
+            }
+        }
+    }
+```
 
 ## Prerequisites
 - Java JDK 17 or higher
@@ -193,19 +671,19 @@ public boolean connect(String peer){
 ## Installation
 1. Clone the repository:
    bash
-   git clone https://github.com/yourusername/pow-blockchain-java.git
-   cd pow-blockchain-java
+   git clone https://github.com/lylaw27/blockchain-java.git
+   cd blockchain-java
    
 
 2. Build the project:
-   bash
+   ```bash
    mvn clean install
-   
+   ```
 
 3. Generate gRPC code:
-   bash
+   ```bash
    mvn compile
-   
+   ```
 
 ## Configuration
 Edit config.properties to configure:
@@ -239,34 +717,13 @@ mvn exec:java -Dexec.mainClass="com.blockchain.NodeMain"
 ## API Documentation
 The node exposes gRPC services for:
 - Submitting transactions
+- Submitting blocks
 - Querying blockchain state
-- Peer management
-- Mining control
+- Querying wallet balance
+- Peer status
 
-See src/main/proto/blockchain.proto for service definitions.
+See src/main/proto/Node.proto for service definitions.
 
-## Architecture
-
-### Core Components
-1. *Blockchain Manager*: Maintains the chain state and handles reorgs
-2. *Network Service*: Manages gRPC communication
-3. *Consensus Engine*: Implements PoW mining
-4. *Mempool*: Handles unconfirmed transactions
-5. *Validation Engine*: Validates blocks and transactions
-
-### Data Structures
-- Block: Contains header and transaction list
-- Transaction: Inputs, outputs, and signatures
-- UTXOSet: Unspent transaction outputs
-- PeerList: Known network nodes
-
-## Testing
-Run unit tests:
-bash
-mvn test
-
-
-Integration tests simulate network behavior with multiple nodes.
 
 ## Contributing
 1. Fork the repository
