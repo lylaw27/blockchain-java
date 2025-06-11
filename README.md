@@ -161,7 +161,130 @@ public boolean connect(String peer){
     }
 ```
 ### 2. Proof Of Work Mining
+- #### Make sure the parent of a child transaction must always get mined first 
 - #### Extract transactions from the mempool based on fees:
+```java
+//Function to build transaction tree where the parent transaction will be the head of the queue
+   public void ancestryTree(HashMap<String,Transaction> txPool,Deque<String> txTree,String TxID){
+         //Add transaction to head of queue
+         txTree.addFirst(TxID);
+
+         //Loop through all the inputs of the transaction to get parent transaction
+         for(TxInput input:txPool.get(TxID).getInputsList()){
+
+            String parentTxID = input.getPrevTxHash();
+
+            //Check if parent transaction is in mempool
+            if(txPool.containsKey(parentTxID)){
+
+               //Recurse function with parent transaction
+               ancestryTree(txPool,txTree,parentTxID);
+            }
+        }
+    }
+
+//Sort Transactions based on fees
+public List<Transaction> sortTransactions(HashMap<String,Transaction> txPool,HashMap<String,TxOutput> poolUTXO){
+
+        List<Transaction> sortedTxs = new ArrayList<>();
+        HashSet<String> txSet = new HashSet<>();
+
+        //Use a heap to store Transaction Trees and sorted according to fees
+        Queue<Deque<String>> txTrees = new PriorityQueue<>((treeA,treeB)->{
+
+            AtomicInteger feeA = new AtomicInteger();
+            AtomicInteger feeB = new AtomicInteger();
+
+            //Calculate fee rate of each transaction tree, Fee Rate = fee/nos. of transaction
+            treeA.forEach((txid)->{
+                AtomicLong outputAmount = new AtomicLong();
+                AtomicLong inputAmount = new AtomicLong();
+
+                //Get output amounts
+                txPool.get(txid).getOutputsList().forEach((output)->{
+                    outputAmount.addAndGet(output.getAmount());
+                });
+
+                //Get input amounts
+                txPool.get(txid).getInputsList().forEach((input)->{
+                    if(txPool.containsKey(input.getPrevTxHash())){
+                        inputAmount.addAndGet(txPool.get(input.getPrevTxHash()).getOutputs(input.getPrevOutIndex()).getAmount());
+                    }
+                    if(chain.getTxMap().containsKey(input.getPrevTxHash())){
+                        String TxLocation = chain.getTxMap().get(input.getPrevTxHash());
+                        String blockHash = TxLocation.substring(0,64);
+                        int TxIndex = Integer.parseInt(TxLocation.substring(65));
+                        Block block = chain.getBlockMap().get(blockHash);
+                        Transaction tx = block.getTransactions(TxIndex);
+                        inputAmount.addAndGet(tx.getOutputs(input.getPrevOutIndex()).getAmount());
+                    }
+                });
+
+                //Compute Transaction Fees
+                feeA.addAndGet((outputAmount.get()-inputAmount.get())/treeA.size());
+            });
+            
+            //Calculate fee rate of each transaction tree, Fee Rate = fee/nos. of transaction
+            treeB.forEach((txid)->{
+                AtomicLong outputAmount = new AtomicLong();
+                AtomicLong inputAmount = new AtomicLong();
+                txPool.get(txid).getOutputsList().forEach((output)->{
+                    outputAmount.addAndGet(output.getAmount());
+                });
+                txPool.get(txid).getInputsList().forEach((input)->{
+                    if(txPool.containsKey(input.getPrevTxHash())){
+                        inputAmount.addAndGet(txPool.get(input.getPrevTxHash()).getOutputs(input.getPrevOutIndex()).getAmount());
+                    }
+                    if(chain.getTxMap().containsKey(input.getPrevTxHash())){
+                        String TxLocation = chain.getTxMap().get(input.getPrevTxHash());
+                        String blockHash = TxLocation.substring(0,64);
+                        int TxIndex = Integer.parseInt(TxLocation.substring(65));
+                        Block block = chain.getBlockMap().get(blockHash);
+                        Transaction tx = block.getTransactions(TxIndex);
+                        inputAmount.addAndGet(tx.getOutputs(input.getPrevOutIndex()).getAmount());
+                    }
+                });
+
+                //Compute Transaction Tree fee rate 
+                feeB.addAndGet((outputAmount.get()-inputAmount.get())/treeB.size());
+            });
+            return feeB.get() - feeA.get();
+        });
+
+        //First loop through available transactions in the mempool
+         txPool.forEach((TxID,tx)->{
+            //Create new Transaction Tree
+            Deque<String> txTree = new ArrayDeque<>();
+
+            //Call function to build transaction tree
+            ancestryTree(txPool,txTree,TxID);
+            
+            //Add transaction tree to heap
+            txTrees.add(txTree);
+         });
+
+        //Create final transaction list
+        while(!txTrees.isEmpty()){
+
+            //Pop heap to get the highest fee rate transcation tree
+            Deque<String> txTree = txTrees.poll();
+           
+            while(!txTree.isEmpty()){
+
+               //Pop every transaction from the tree and add to the final transaction list for mining
+               String TxID = txTree.pop();
+
+               //Make sure no duplicated transactions are added to the list
+               if(!txSet.contains(TxID)){
+                  sortedTxs.add(txPool.get(TxID));
+                  txSet.add(TxID);
+                }
+            }
+        }
+        
+        return sortedTxs;
+    }
+```
 
 - #### Generate Merkle Root with the sorted transaction list:
 ```java
