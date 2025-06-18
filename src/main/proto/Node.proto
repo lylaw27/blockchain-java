@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+option java_package = "com.example.powblockchain";
+option java_multiple_files = true;
+
+service Node{
+  rpc HandleTransaction(Transaction) returns (Void){};
+  rpc Handshake(Version) returns (Version){};
+  rpc HandleBlock(Block) returns (Void){};
+  rpc HandleBalance(WalletInfo) returns (UTXOList){};
+  rpc HandleWallet(WalletInfo) returns (Void){}
+  rpc SendBlock(BlockIndex) returns (Void){};
+  rpc SendTransaction(TxID) returns (Void){};
+}
+
+message Version {
+  uint32 version = 1;
+  int32 height = 2;
+  string listenAddr = 3;
+  repeated string peer = 4;
+}
+
+message Void{ }
+
+message Block{
+  Header header = 1;
+  repeated Transaction transactions = 2;
+}
+
+message Header{
+  string prevHash = 1;
+  string merkleRoot = 2;
+  int64 timestamp = 3;
+  uint32 nonce = 4;
+  int32 difficulty = 5;
+}
+
+message TxInput{
+  string prevTxHash = 1;
+  optional uint32 prevOutIndex = 2;
+  string publicKey = 3;
+  string signature = 4;
+  optional bool coinbase = 5;
+}
+
+message TxOutput{
+  optional int64 amount = 1;
+  string address = 2;
+}
+
+message Transaction {
+  string TxID = 1;
+  repeated TxInput inputs = 2;
+  repeated TxOutput outputs = 3;
+}
+
+message UTXOList{
+  repeated UTXO utxos = 1;
+}
+
+message UTXO{
+  TxOutput output = 1;
+  string ID = 2;
+}
+
+message WalletInfo{
+  string address = 1;
+}
+
+message BlockIndex{
+  Version version = 1;
+  int32 index = 2;
+}
+
+message TxID{
+  Version version = 1;
+  string TxID = 2;
+}
