@@ -10,7 +10,7 @@ service Node{
   rpc HandleBalance(WalletInfo) returns (UTXOList){};
   rpc HandleWallet(WalletInfo) returns (Void){}
   rpc SendBlock(BlockIndex) returns (Void){};
-  rpc SendTransaction(TxID) returns (Void){};
+  rpc SendTransaction(TxID) returns (TxRes){};
 }
 
 message Version {
@@ -52,6 +52,7 @@ message Transaction {
   string TxID = 1;
   repeated TxInput inputs = 2;
   repeated TxOutput outputs = 3;
+  string listenAddr = 4;
 }
 
 message UTXOList{
@@ -68,11 +69,15 @@ message WalletInfo{
 }
 
 message BlockIndex{
-  Version version = 1;
+  string listenAddr = 1;
   int32 index = 2;
 }
 
 message TxID{
-  Version version = 1;
+  string listenAddr = 1;
   string TxID = 2;
+}
+
+message TxRes {
+  bool found = 1;
 }

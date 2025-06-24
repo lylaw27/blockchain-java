@@ -189,7 +189,7 @@ public class NodeController {
     @RequestMapping(value = "/wallet/{address}", method = RequestMethod.GET)
     @ResponseBody
     public String getWalletInfo(@PathVariable String address) {
-            if (node.getWalletMap().containsKey(address)) {
+            if (node.getChain().getWalletMap().containsKey(address)) {
                 Wallet wallet = node.getWalletMap().get(address);
                 HashMap<String, String> txMap = node.getChain().getTxMap();
                 long balance = wallet.getBalance();

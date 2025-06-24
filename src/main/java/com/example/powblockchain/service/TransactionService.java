@@ -6,6 +6,8 @@ import com.example.powblockchain.controller.NodeController;
 import com.example.powblockchain.helperFunc.HashSHA256;
 import com.example.powblockchain.model.Mempool;
 import com.example.powblockchain.model.Node;
+import io.grpc.ManagedChannel;
+import io.grpc.ManagedChannelBuilder;
 import io.grpc.stub.StreamObserver;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -28,19 +30,44 @@ public class TransactionService extends NodeGrpc.NodeImplBase{
     }
 
     @Override
-    public void handleTransaction(Transaction txRequest, StreamObserver<Void> responseObserver) {
+    public void handleTransaction(Transaction txWithIp, StreamObserver<Void> responseObserver) {
         responseObserver.onNext(Void.getDefaultInstance());
         responseObserver.onCompleted();
+        String incomingIp = txWithIp.getListenAddr();
+        Transaction txRequest = txWithIp.toBuilder().clearListenAddr().build();
         String txID = HashSHA256.hashObject(txRequest);
         Mempool mempool = node.getPool();
 
         //Make sure one transaction gets processed each time
         synchronized (this) {
         try{
-            if (!mempool.has(txID) && mempool.validateTx(txRequest,node.getChain().getUTXO())) {
+            if (!mempool.has(txID) && mempool.validateTx(txRequest,node.getChain().getUTXO(),incomingIp, node.getServerIp())) {
     //            System.out.println("tx sent to: " + node.getVersion().getListenAddr() + " Hash: " + txID);
 //                wsController.sendTransactions();
-                node.getPool().addTx(txRequest);
+                mempool.addTx(txRequest);
+
+                //Save wallet address if it is new-found
+//                for(TxInput txInput: txRequest.getInputsList()){
+//                    String address = HashSHA256.hash(txInput.getPublicKey());
+//                    if(!node.getChain().getWalletMap().containsKey(address)){
+//                        node.getWalletList().add(address);
+//                        node.getChain().getWalletMap().put(address,new HashSet<>());
+//                    }
+//                }
+//                for(TxOutput txOutput: txRequest.getOutputsList()){
+//                    String address = txOutput.getAddress();
+//                    if(!node.getChain().getWalletMap().containsKey(address)){
+//                        System.out.println("new wallet found");
+//                        node.getWalletList().add(address);
+//                        node.getChain().getWalletMap().put(address,new HashSet<>());
+//                    }
+//                }
+
+                //If orphan pool contains child transaction, validate child again
+                if(mempool.getOrphanPool().containsKey(txID)){
+                    node.sendTx(mempool.getOrphanPool().get(txID), node.getServerIp());
+                }
+
                 node.broadcastTx(txRequest);
             }
         }catch (Exception e){
@@ -56,16 +83,16 @@ public class TransactionService extends NodeGrpc.NodeImplBase{
         //Make sure one block gets processed each time
         synchronized (this) {
             String blockHash = HashSHA256.hashObject(blockRequest.getHeader());
-            if (!node.getChain().has(blockHash)){
-//                System.out.println("Block sent to: " + node.getVersion().getListenAddr() + " Hash: " + blockHash);
+            if (!node.getChain().has(blockHash)  || node.getChain().getHeight() == -1){
+                System.out.println("Block sent to: " + node.getVersion().getListenAddr() + " Hash: " + blockHash);
                 node.getChain().getBlockMap().put(blockHash, blockRequest);
                 try{
                     //Check if incoming block is extendable to the main chain
-                    if(node.getChain().validateHeader(blockRequest)){
+                    if(node.getChain().validateHeader(blockRequest) || node.getChain().getHeight() == -1){
                         if(node.getChain().validateBlock(blockRequest)){
                             node.appendBlock(blockRequest);
 //                            wsController.sendBlocks();
-//                            System.out.println(node.getVersion().getListenAddr() + ": added block to main: " + blockHash);
+                            System.out.println(node.getVersion().getListenAddr() + ": added block to main: " + blockHash);
                         }
                     }
                     else{
@@ -103,6 +130,7 @@ public class TransactionService extends NodeGrpc.NodeImplBase{
                         System.out.println(node.getVersion().getListenAddr() + ": Orphan Blocks is inserted");
                     }
                     node.getVersion().setHeight(node.getChain().getHeight());
+                    System.out.println("Block Height is now: " + node.getChain().getHeight());
                 }
                 catch(Exception e){
                     System.out.println(node.getVersion().getListenAddr() + ":" + e.getMessage());
@@ -151,16 +179,22 @@ public class TransactionService extends NodeGrpc.NodeImplBase{
 
     public void sendBlock(BlockIndex message, StreamObserver<Void> responseObserver){
         int index = message.getIndex();
-        node.sendBlock(node.getChain().getBlockByIndex(index),message.getVersion().getListenAddr());
+        node.sendBlock(node.getChain().getBlockByIndex(index),message.getListenAddr());
         responseObserver.onNext(Void.getDefaultInstance());
         responseObserver.onCompleted();
     }
 
-    public void sendTransaction(TxID message, StreamObserver<Void> responseObserver){
+    public void sendTransaction(TxID message, StreamObserver<TxRes> responseObserver){
         String TxID = message.getTxID();
-        Transaction tx = node.getPool().getTxPool().get(TxID);
-        node.sendTx(tx,message.getVersion().getListenAddr());
-        responseObserver.onNext(Void.getDefaultInstance());
-        responseObserver.onCompleted();
+        if(node.getPool().getTxPool().containsKey(TxID)){
+            responseObserver.onNext(TxRes.newBuilder().setFound(true).build());
+            responseObserver.onCompleted();
+            Transaction tx = node.getPool().getTxPool().get(TxID);
+            node.sendTx(tx,message.getListenAddr());
+        }
+        else{
+            responseObserver.onNext(TxRes.newBuilder().setFound(false).build());
+            responseObserver.onCompleted();
+        }
     }
 }

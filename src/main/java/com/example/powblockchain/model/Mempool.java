@@ -1,11 +1,14 @@
 package com.example.powblockchain.model;
 
-import com.example.powblockchain.Transaction;
-import com.example.powblockchain.TxInput;
-import com.example.powblockchain.TxOutput;
+import com.example.powblockchain.*;
+import com.example.powblockchain.Void;
 import com.example.powblockchain.helperFunc.Encoder;
 import com.example.powblockchain.helperFunc.HashSHA256;
+import io.grpc.ManagedChannel;
+import io.grpc.ManagedChannelBuilder;
 import lombok.Getter;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
@@ -16,6 +19,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static com.example.powblockchain.helperFunc.Encoder.hexToKey;
 
+@Component
 @Getter
 public class Mempool {
     HashMap<String, Transaction> txPool;
@@ -51,9 +55,11 @@ public class Mempool {
         }
     }
 
-    public boolean validateTx(Transaction tx,HashMap<String,TxOutput> confirmedUTXO) throws Exception {
+    public boolean validateTx(Transaction tx,HashMap<String,TxOutput> confirmedUTXO,String incomingIp,String serverIp) throws Exception {
         AtomicLong inputAmount = new AtomicLong();
         AtomicLong outputAmount = new AtomicLong();
+        boolean parentTx = true;
+
         if(tx.getInputsCount() < 1 || tx.getOutputsCount() < 1) {
             throw new Exception("Incomplete Tx data!");
         }
@@ -84,7 +90,26 @@ public class Mempool {
                     inputAmount.addAndGet(poolUTXO.get(prevOutputKey).getAmount());
                 }
                 else{
-                    throw new Exception("UTXO Not Found!");
+                        //Try request for previous ancestor transaction
+                        String[] ipAndPort = incomingIp.split(":");
+                        ManagedChannel channel = ManagedChannelBuilder.forAddress(ipAndPort[0], Integer.parseInt(ipAndPort[1])).usePlaintext().build();
+                        NodeGrpc.NodeBlockingStub stub = NodeGrpc.newBlockingStub(channel);
+                        try {
+                            TxID.Builder txRequest = TxID.newBuilder().setTxID(input.getPrevTxHash()).setListenAddr(serverIp);
+                            TxRes TxFound = stub.sendTransaction(txRequest.build());
+                            if(TxFound.getFound()){
+                                orphanPool.put(input.getPrevTxHash(),tx);
+                                parentTx = false;
+                            }
+                            else{
+                                throw new Exception("Previous Tx not found, Double Spent Transaction!");
+                            }
+                        }catch (Exception e){
+                            System.out.println("Memory Pool" + ":" + e.getMessage());
+                        }
+                        finally {
+                            channel.shutdownNow();
+                        }
                 }
             }
 
@@ -117,7 +142,7 @@ public class Mempool {
             poolUTXO.remove(prevOutputKey);
         });
         //System.out.println("Valid Tx!");
-        return true;
+        return parentTx;
     }
 
     public boolean has(String hash) {

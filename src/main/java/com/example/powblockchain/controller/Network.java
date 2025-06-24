@@ -16,6 +16,8 @@ public class Network {
     @Autowired
     Node node;
 
+    volatile boolean generatingTx = false;
+
     @RequestMapping(value = "/node/{ipAddress}", method = RequestMethod.POST)
     public String initiateConnection(@PathVariable String ipAddress){
         try{
@@ -25,6 +27,19 @@ public class Network {
             return "error";
         }
         return "connected to :" + ipAddress;
+    }
+
+    @RequestMapping(value = "/mine", method = RequestMethod.POST)
+    public String initiateMining(){
+        node.resetMining();
+        return "Started Mining!";
+    }
+
+    @RequestMapping(value = "/generateTx", method = RequestMethod.POST)
+    public String initiateTxGeneration(){
+        generatingTx = true;
+        generateTx();
+        return "Generating Transactions!";
     }
 
     public void start() {
@@ -37,14 +52,10 @@ public class Network {
 
         node.startServer();
 
-        //    Generate Random Transactions
-        new Thread(() -> {
-            generateTx();
-        }).start();
-
     }
 
-    public void generateTx(){
+    //Generate Random Transactions
+    synchronized void generateTx(){
         ArrayList<Wallet> payers = new ArrayList<>();
         ArrayList<Wallet> payees = new ArrayList<>();
         HashSet<Wallet> payerSet = new HashSet<>();
@@ -55,7 +66,7 @@ public class Network {
             node.getWalletMap().put(node.getWallet().getAddress(),node.getWallet());
 //        }
 
-        while(true){
+        while(generatingTx){
             //randomize a payer
             int payerIdx = (int) (Math.random() * payers.size());
             //randomize a payee
@@ -69,7 +80,7 @@ public class Network {
             boolean txResponse;
             txResponse = payers.get(payerIdx).createTx(payees.get(payeeIdx).getAddress(), amount,fee);
             if(txResponse){
-//                System.out.println("Wallet:" + payerIdx + "->" + "Wallet:"+ payeeIdx + "---" + "amount:" +amount + "sats" + "---" + "fee:" +fee);
+                System.out.println("Wallet:" + payerIdx + "->" + "Wallet:"+ payeeIdx + "---" + "amount:" +amount + "sats" + "---" + "fee:" +fee);
                 if(!payerSet.contains(payees.get(payeeIdx))){
                     payers.add(payees.get(payeeIdx));
                 }

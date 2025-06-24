@@ -32,12 +32,14 @@ public class Node {
 
     //Orphan Blocks = ParentHash -> Block
     HashMap<String,Block> orphanBlocks;
-    Mempool pool;
+//    Mempool pool;
     Wallet wallet;
 
 //    @Lazy
 //    @Autowired
 //    TransactionService service;
+    @Autowired
+    Mempool pool;
 
     @Autowired
     Chain chain;
@@ -65,8 +67,6 @@ public class Node {
             serverIp = PublicIpResolver.getPublicIp()+":"+port;
         }
         version = Version.newBuilder().setVersion(1).setHeight(-1).setListenAddr(serverIp);
-        pool = new Mempool();
-//        chain = new Chain();
         peers = new HashMap<>();
         orphanBlocks = new HashMap<>();
         walletList = new ArrayList<>();
@@ -103,7 +103,9 @@ public class Node {
     public void appendBlock(Block block){
         chain.appendBlock(block);
         pool.clear(block.getTransactionsList());
-        resetMining();
+        if(mining){
+            resetMining();
+        }
         broadcastBlock(block);
     }
 
@@ -186,7 +188,8 @@ public class Node {
         ManagedChannel channel = ManagedChannelBuilder.forAddress(ipAndPort[0], Integer.parseInt(ipAndPort[1])).usePlaintext().build();
         NodeGrpc.NodeBlockingStub stub = NodeGrpc.newBlockingStub(channel);
         try {
-            Void unused = stub.handleTransaction(tx);
+            Transaction.Builder txWithIp = tx.toBuilder().setListenAddr(serverIp);
+            Void unused = stub.handleTransaction(txWithIp.build());
         }
         catch (StatusRuntimeException e){
             System.out.println("Connection cannot be established!");
@@ -203,7 +206,6 @@ public class Node {
     }
 
     public void sendBlock(Block block,String ipAddress){
-        System.out.println(ipAddress);
         String[] ipAndPort = ipAddress.split(":");
         ManagedChannel channel = ManagedChannelBuilder.forAddress(ipAndPort[0], Integer.parseInt(ipAndPort[1])).usePlaintext().build();
         NodeGrpc.NodeBlockingStub stub = NodeGrpc.newBlockingStub(channel);
@@ -332,8 +334,6 @@ public class Node {
                     .start();
             System.out.println("Server started, listening on " + server.getPort());
             wallet.connect(serverIp);
-            new Thread(this::startMining).start();
-
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -351,21 +351,22 @@ public class Node {
 
     public void checkIncomingHeight(Version peerVer){
         if(peerVer.getHeight() > chain.height){
-            int index = peerVer.getHeight();
-            while(chain.height < peerVer.getHeight() || index > 0){
+            int index = chain.height+1;
+            while(peerVer.getHeight() >= index && index > -1){
                 String[] ipAndPort = peerVer.getListenAddr().split(":");
                 ManagedChannel channel = ManagedChannelBuilder.forAddress(ipAndPort[0], Integer.parseInt(ipAndPort[1])).usePlaintext().build();
                 NodeGrpc.NodeBlockingStub stub = NodeGrpc.newBlockingStub(channel);
                 try{
-                    BlockIndex message = BlockIndex.newBuilder().setIndex(index).setVersion(version).build();
+                    BlockIndex message = BlockIndex.newBuilder().setIndex(index).setListenAddr(serverIp).build();
                     Void unused = stub.sendBlock(message);
-                    index--;
+                    System.out.println("Requesting block: " + index);
                 }
                 catch (StatusRuntimeException e){
                     System.out.println("Connection cannot be established!");
                 }
                 finally {
-                    channel.shutdown();
+                    channel.shutdownNow();
+                    index++;
                 }
             }
         }
@@ -373,11 +374,11 @@ public class Node {
 
 
     public boolean addOrphanBlock(Block incomingBlock){
-        String blockHash = HashSHA256.hashObject(incomingBlock.getHeader());
-        if(orphanBlocks.containsKey(blockHash)){
+        String prevBlockHash = incomingBlock.getHeader().getPrevHash();
+        if(orphanBlocks.containsKey(prevBlockHash)){
             return false;
         }
-        orphanBlocks.put(blockHash,incomingBlock);
+        orphanBlocks.put(prevBlockHash,incomingBlock);
         return true;
     }
 

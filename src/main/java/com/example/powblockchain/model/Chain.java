@@ -263,7 +263,7 @@ public class Chain {
         String prevBlockHash = incomingBlock.getHeader().getPrevHash();
 
         //If new Block's previous hash can point to blocks in the main chain, then forking would occur
-        if(blockMap.containsKey(prevBlockHash)){
+        if(blockList.contains(incomingBlock)){
             int forkHeight = getBlockHeight(prevBlockHash);
             //Incoming Block beyond 6 confirmed blocks will be rejected
             if(height - forkHeight < 6){
