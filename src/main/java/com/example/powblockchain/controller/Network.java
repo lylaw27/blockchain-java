@@ -36,9 +36,9 @@ public class Network {
     }
 
     @RequestMapping(value = "/generateTx", method = RequestMethod.POST)
-    public String initiateTxGeneration(){
+    public String toggleTxGeneration(){
         generatingTx = true;
-        generateTx();
+        new Thread(this::generateTx).start();
         return "Generating Transactions!";
     }
 
@@ -49,28 +49,37 @@ public class Network {
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
-
         node.startServer();
-
+        payers.add(node.getWallet());
     }
+
+    ArrayList<Wallet> payers = new ArrayList<>();
 
     //Generate Random Transactions
     synchronized void generateTx(){
-        ArrayList<Wallet> payers = new ArrayList<>();
-        ArrayList<Wallet> payees = new ArrayList<>();
-        HashSet<Wallet> payerSet = new HashSet<>();
+        HashSet<String> payeesSet = new HashSet<>();
 
-//        for(Node node : nodes){
-            payers.add(node.getWallet());
-            payees.add(node.getWallet());
-            node.getWalletMap().put(node.getWallet().getAddress(),node.getWallet());
-//        }
+//        node.getWalletMap().put(node.getWallet().getAddress(),node.getWallet());
 
         while(generatingTx){
+            payeesSet.addAll(node.getChain().getWalletMap().keySet());
+            payeesSet.addAll(node.getPool().getWalletMap().keySet());
+            ArrayList<String> payees = new ArrayList<>(payeesSet);
+
             //randomize a payer
             int payerIdx = (int) (Math.random() * payers.size());
+
             //randomize a payee
             int payeeIdx = (int) (Math.random() * payees.size());
+
+            int luck = (int) (Math.random() * 4);
+            if(luck == 0){
+                Wallet newWallet = new Wallet();
+                newWallet.connect(node.getServerIp());
+                payers.add(newWallet);
+                payees.add(newWallet.getAddress());
+                payeeIdx = payees.size()-1;
+            }
 
             //randomize payment amount
             int amount = (int) (Math.random() * payers.get(payerIdx).getBalance())+1;
@@ -78,26 +87,17 @@ public class Network {
             int fee = (int) (Math.random() * 10);
             //Create payment every 500ms
             boolean txResponse;
-            txResponse = payers.get(payerIdx).createTx(payees.get(payeeIdx).getAddress(), amount,fee);
-            if(txResponse){
-                System.out.println("Wallet:" + payerIdx + "->" + "Wallet:"+ payeeIdx + "---" + "amount:" +amount + "sats" + "---" + "fee:" +fee);
-                if(!payerSet.contains(payees.get(payeeIdx))){
-                    payers.add(payees.get(payeeIdx));
-                }
-                payerSet.add(payees.get(payeeIdx));
 
-//                add new wallets every loop
-                int luck = (int) (Math.random() * 4);
-                if(luck == 0){
-//                    int nodeIdx = (int) (Math.random() * nodes.size());
-                    Wallet newWallet = new Wallet();
-                    newWallet.connect(node.getServerIp());
-                    payees.add(newWallet);
-                    node.getWalletMap().put(newWallet.getAddress(),newWallet);
-                }
+            txResponse = payers.get(payerIdx).createTx(payees.get(payeeIdx), amount,fee);
+
+            if(txResponse) {
+                System.out.println("Wallet:" + payerIdx + "->" + "Wallet:" + payeeIdx + "---" + "amount:" + amount + "sats" + "---" + "fee:" + fee);
             }
+//            else{
+//                generateTx();
+//            }
             try {
-                Thread.sleep(1000);
+                Thread.sleep(3000);
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }

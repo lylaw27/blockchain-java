@@ -26,6 +26,7 @@ public class TransactionService extends NodeGrpc.NodeImplBase{
 //    NodeController wsController;
 
     public TransactionService(Node node) {
+
         this.node = node;
     }
 
@@ -45,23 +46,6 @@ public class TransactionService extends NodeGrpc.NodeImplBase{
     //            System.out.println("tx sent to: " + node.getVersion().getListenAddr() + " Hash: " + txID);
 //                wsController.sendTransactions();
                 mempool.addTx(txRequest);
-
-                //Save wallet address if it is new-found
-//                for(TxInput txInput: txRequest.getInputsList()){
-//                    String address = HashSHA256.hash(txInput.getPublicKey());
-//                    if(!node.getChain().getWalletMap().containsKey(address)){
-//                        node.getWalletList().add(address);
-//                        node.getChain().getWalletMap().put(address,new HashSet<>());
-//                    }
-//                }
-//                for(TxOutput txOutput: txRequest.getOutputsList()){
-//                    String address = txOutput.getAddress();
-//                    if(!node.getChain().getWalletMap().containsKey(address)){
-//                        System.out.println("new wallet found");
-//                        node.getWalletList().add(address);
-//                        node.getChain().getWalletMap().put(address,new HashSet<>());
-//                    }
-//                }
 
                 //If orphan pool contains child transaction, validate child again
                 if(mempool.getOrphanPool().containsKey(txID)){

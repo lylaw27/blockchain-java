@@ -84,7 +84,7 @@ public class NodeController {
             }
             i--;
         }
-        template.convertAndSend("/node/" + node.getVersion().getListenAddr() + "/blocks", responseArray.toString());
+        template.convertAndSend("/node/" + node.getId() + "/blocks", responseArray.toString());
     }
 
     public void sendPeerList() {
@@ -190,9 +190,9 @@ public class NodeController {
     @ResponseBody
     public String getWalletInfo(@PathVariable String address) {
             if (node.getChain().getWalletMap().containsKey(address)) {
-                Wallet wallet = node.getWalletMap().get(address);
+//                Wallet wallet = node.getWalletMap().get(address);
                 HashMap<String, String> txMap = node.getChain().getTxMap();
-                long balance = wallet.getBalance();
+                long balance = node.getWalletBalance(address);
                 HashSet<String> confirmedSet = node.getChain().getWalletMap().get(address);
                 HashSet<String> memPoolSet = node.getPool().getWalletMap().get(address);
 

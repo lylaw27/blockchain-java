@@ -41,6 +41,8 @@ public class Wallet {
         }
     }
 
+
+
     public void connect(String serverIp){
         this.serverIp = serverIp;
         ManagedChannel channel = ManagedChannelBuilder.forAddress(serverIp.split(":")[0], Integer.parseInt(serverIp.split(":")[1])).usePlaintext().build();

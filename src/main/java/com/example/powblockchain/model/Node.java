@@ -28,7 +28,7 @@ public class Node {
     String serverIp;
     HashMap<String,Version> peers;
     ArrayList<String> walletList;
-    HashMap<String,Wallet> walletMap;
+//    HashMap<String,Wallet> walletMap;
 
     //Orphan Blocks = ParentHash -> Block
     HashMap<String,Block> orphanBlocks;
@@ -45,7 +45,7 @@ public class Node {
     Chain chain;
 
     @Value("${node.id}")
-    String nodeId;
+    String Id;
 
     int port;
 
@@ -70,8 +70,9 @@ public class Node {
         peers = new HashMap<>();
         orphanBlocks = new HashMap<>();
         walletList = new ArrayList<>();
-        walletMap = new HashMap<>();
+//        walletMap = new HashMap<>();
         this.wallet = new Wallet();
+        walletList.add(wallet.getAddress());
     }
 
     public boolean connect(String ipAddress){
@@ -415,4 +416,22 @@ public class Node {
         return false;
     }
 
+    public long getWalletBalance(String walletAddress){
+
+        AtomicLong balance = new AtomicLong(0);
+
+        chain.getUTXO().forEach((id,txOutput)->{
+            if(txOutput.getAddress().equals(walletAddress) && !pool.getSpentTX().contains(id)){
+                balance.addAndGet(txOutput.getAmount());
+            }
+        });
+
+        pool.getPoolUTXO().forEach((id,txOutput)->{
+            if(txOutput.getAddress().equals(walletAddress)){
+                balance.addAndGet(txOutput.getAmount());
+            }
+        });
+
+        return balance.get();
+    }
 }
