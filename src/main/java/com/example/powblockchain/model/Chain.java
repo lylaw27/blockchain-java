@@ -159,7 +159,7 @@ public class Chain {
     public boolean validateHeader(Block incomingBlock){
         //Check if new block prevHash matches with the current block hash of main chain
         String prevBlockHash = incomingBlock.getHeader().getPrevHash();
-        return height == -1 || prevBlockHash.equals(getRecentHash());
+        return prevBlockHash.equals(getRecentHash());
     }
 
     public boolean validateBlock(Block incomingBlock) throws Exception {

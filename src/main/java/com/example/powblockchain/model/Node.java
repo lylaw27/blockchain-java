@@ -3,7 +3,6 @@ package com.example.powblockchain.model;
 import com.example.powblockchain.*;
 import com.example.powblockchain.Void;
 import com.example.powblockchain.helperFunc.PublicIpResolver;
-import com.example.powblockchain.service.TransactionService;
 import com.example.powblockchain.helperFunc.HashSHA256;
 import com.example.powblockchain.helperFunc.MerkleTree;
 import io.grpc.*;
@@ -11,10 +10,8 @@ import lombok.Getter;
 import lombok.Setter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -24,20 +21,16 @@ import java.util.concurrent.atomic.AtomicLong;
 @Component
 public class Node {
     Version.Builder version;
+    @Setter
     Server server;
     String serverIp;
     HashMap<String,Version> peers;
     ArrayList<String> walletList;
-//    HashMap<String,Wallet> walletMap;
 
     //Orphan Blocks = ParentHash -> Block
     HashMap<String,Block> orphanBlocks;
-//    Mempool pool;
     Wallet wallet;
 
-//    @Lazy
-//    @Autowired
-//    TransactionService service;
     @Autowired
     Mempool pool;
 
@@ -47,7 +40,7 @@ public class Node {
     @Value("${node.id}")
     String Id;
 
-    int port;
+    int rpcPort;
 
     @Value("${mining.difficulty}")
     int defaultDifficulty;
@@ -58,28 +51,26 @@ public class Node {
     @Setter
     volatile Boolean mining = false;
 
-    public Node(@Value("${grpc.port}") int port, @Value("${spring.profiles.active}") String env){
-        this.port = port;
+    public Node(@Value("${server.port}") int restPort ,@Value("${grpc.port}") int rpcPort, @Value("${spring.profiles.active}") String env , @Value("${node.id}") String nodeId) {
         if(env.equals("dev")){
-            serverIp = "127.0.0.1"+":"+port;
+            serverIp = "127.0.0.1";
         }
         else{
-            serverIp = PublicIpResolver.getPublicIp()+":"+port;
+            serverIp = PublicIpResolver.getPublicIp();
         }
-        version = Version.newBuilder().setVersion(1).setHeight(-1).setListenAddr(serverIp);
+        this.rpcPort = rpcPort;
+        version = Version.newBuilder().setVersion(1).setHeight(-1).setIpAddr(serverIp).setNodeId(nodeId).setGrpcPort(rpcPort).setRestPort(restPort);
         peers = new HashMap<>();
         orphanBlocks = new HashMap<>();
         walletList = new ArrayList<>();
-//        walletMap = new HashMap<>();
         this.wallet = new Wallet();
-        walletList.add(wallet.getAddress());
+        wallet.serverIp = serverIp + ":" + rpcPort;
     }
 
-    public boolean connect(String ipAddress){
-        String[] ipAndPort = ipAddress.split(":");
-        ManagedChannel channel = ManagedChannelBuilder.forAddress(ipAndPort[0], Integer.parseInt(ipAndPort[1])).usePlaintext().build();
+    public void connect(String ipAddress, int port){
+        ManagedChannel channel = ManagedChannelBuilder.forAddress(ipAddress, port).usePlaintext().build();
         NodeGrpc.NodeBlockingStub stub = NodeGrpc.newBlockingStub(channel);
-        System.out.println("Connecting to " + ipAndPort[0] + ":" + ipAndPort[1]);
+        System.out.println("Connecting to " + ipAddress + ":" + port);
 
         //Prepare Peer List
         peers.forEach((ip,v)->{
@@ -93,16 +84,15 @@ public class Node {
         }
         catch (StatusRuntimeException e){
             System.out.println("Peer does not exist");
-            return false;
         }
         finally{
             channel.shutdown();
         }
-        return true;
     }
 
     public void appendBlock(Block block){
         chain.appendBlock(block);
+        version.setHeight(version.getHeight()+1);
         pool.clear(block.getTransactionsList());
         if(mining){
             resetMining();
@@ -112,14 +102,18 @@ public class Node {
 
     public void addPeer(Version peerVer){
         //Add peer to peer list
-        peers.putIfAbsent(peerVer.getListenAddr(),peerVer);
-        System.out.println(version.getListenAddr() + " connected to peer " + peerVer.getListenAddr());
+        if(peerVer != version.build()){
+            peers.putIfAbsent(peerVer.getIpAddr()+":"+peerVer.getGrpcPort(),peerVer);
+        }
+        System.out.println(version.getIpAddr() + " connected to peer " + peerVer.getIpAddr());
 
         //Peer Discovery - connect to other peers in the peer list
-        peerVer.getPeerList().forEach(addr->{
-        if(!Objects.equals(version.getListenAddr(),addr) && !peers.containsKey(addr)){
-            this.connect(addr);
-        }});
+        peerVer.getPeerList().forEach(ipWithPort->{
+        String[] ipAndPort = ipWithPort.split(":");
+        if(!Objects.equals(version.getIpAddr()+":"+version.getGrpcPort(),ipWithPort) && !peers.containsKey(ipWithPort)){
+            this.connect(ipAndPort[0], Integer.parseInt(ipAndPort[1]));
+        }
+        });
     }
 
     public synchronized void startMining() {
@@ -138,11 +132,11 @@ public class Node {
                 .setNonce(nonce)
                 .setPrevHash(prevHash)
                 .setDifficulty(difficulty);
-//        System.out.println(version.getListenAddr() + " is mining ⛏ ...");
+//        System.out.println(version.getIpAddr() + " is mining ⛏ ...");
         while(mining){
             String attempt = HashSHA256.hashObject(header);
             if(attempt.substring(0,difficulty).equals(target)){
-                System.out.println(version.getListenAddr() + " solved: " + attempt + " at height: " + (chain.getHeight()+1) + ", prevHash: " + prevHash);
+                System.out.println(version.getIpAddr() + " solved: " + attempt + " at height: " + (chain.getHeight()+1) + ", prevHash: " + prevHash);
                 break;
             }
             header.setNonce(nonce++);
@@ -160,13 +154,13 @@ public class Node {
 
             //Validate block then broadcast it
             try{
-                sendBlock(block.build(),version.getListenAddr());
+                sendBlock(block.build(),version.getIpAddr() +":"+ version.getGrpcPort());
                 broadcastBlock(block.build());
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
         }
-//        System.out.println(version.getListenAddr() + " stopped mining...");
+//        System.out.println(version.getIpAddr() + " stopped mining...");
     }
 
     public void resetMining(){
@@ -189,10 +183,11 @@ public class Node {
         ManagedChannel channel = ManagedChannelBuilder.forAddress(ipAndPort[0], Integer.parseInt(ipAndPort[1])).usePlaintext().build();
         NodeGrpc.NodeBlockingStub stub = NodeGrpc.newBlockingStub(channel);
         try {
-            Transaction.Builder txWithIp = tx.toBuilder().setListenAddr(serverIp);
+            Transaction.Builder txWithIp = tx.toBuilder().setIpAddr(version.getIpAddr()+":"+version.getGrpcPort());
             Void unused = stub.handleTransaction(txWithIp.build());
         }
         catch (StatusRuntimeException e){
+            peers.remove(ipAddress);
             System.out.println("Connection cannot be established!");
         }
         finally {
@@ -210,11 +205,12 @@ public class Node {
         String[] ipAndPort = ipAddress.split(":");
         ManagedChannel channel = ManagedChannelBuilder.forAddress(ipAndPort[0], Integer.parseInt(ipAndPort[1])).usePlaintext().build();
         NodeGrpc.NodeBlockingStub stub = NodeGrpc.newBlockingStub(channel);
-//        System.out.println(getVersion().getListenAddr() + "->" + toPort);
+//        System.out.println(getVersion().getIpAddr() + "->" + toPort);
         try {
             Void unused = stub.handleBlock(block);
         }
         catch (StatusRuntimeException e){
+            peers.remove(ipAddress);
             System.out.println("Connection cannot be established!");
         }
         finally {
@@ -327,42 +323,42 @@ public class Node {
         }
     }
 
-    public void startServer(){
-        try {
-            server = ServerBuilder.forPort(port)
-                    .addService(new TransactionService(this))
-                    .build()
-                    .start();
-            System.out.println("Server started, listening on " + server.getPort());
-            wallet.connect(serverIp);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-    }
+//    public void startServer(){
+//        try {
+//            server = ServerBuilder.forPort(port)
+//                    .addService(new TransactionService(this))
+//                    .build()
+//                    .start();
+//            System.out.println("Server started, listening on " + server.getPort());
+//            wallet.connect(serverIp);
+//        } catch (IOException e) {
+//            throw new RuntimeException(e);
+//        }
+//    }
 
-    public void disconnectNode(){
-        try{
-            server.shutdown().awaitTermination();
-            server.shutdownNow();
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
-        stopMining();
-    }
+//    public void disconnectNode(){
+//        try{
+//            server.shutdown().awaitTermination();
+//            server.shutdownNow();
+//        } catch (InterruptedException e) {
+//            throw new RuntimeException(e);
+//        }
+//        stopMining();
+//    }
 
     public void checkIncomingHeight(Version peerVer){
         if(peerVer.getHeight() > chain.height){
             int index = chain.height+1;
             while(peerVer.getHeight() >= index && index > -1){
-                String[] ipAndPort = peerVer.getListenAddr().split(":");
-                ManagedChannel channel = ManagedChannelBuilder.forAddress(ipAndPort[0], Integer.parseInt(ipAndPort[1])).usePlaintext().build();
+                ManagedChannel channel = ManagedChannelBuilder.forAddress(peerVer.getIpAddr(), peerVer.getGrpcPort()).usePlaintext().build();
                 NodeGrpc.NodeBlockingStub stub = NodeGrpc.newBlockingStub(channel);
                 try{
-                    BlockIndex message = BlockIndex.newBuilder().setIndex(index).setListenAddr(serverIp).build();
+                    BlockIndex message = BlockIndex.newBuilder().setIndex(index).setIpAddr(version.getIpAddr()+":"+version.getGrpcPort()).build();
                     Void unused = stub.sendBlock(message);
                     System.out.println("Requesting block: " + index);
                 }
                 catch (StatusRuntimeException e){
+                    peers.remove(peerVer.getIpAddr()+":"+peerVer.getGrpcPort());
                     System.out.println("Connection cannot be established!");
                 }
                 finally {

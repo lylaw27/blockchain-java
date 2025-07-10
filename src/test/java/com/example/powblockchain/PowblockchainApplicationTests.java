@@ -9,5 +9,4 @@ class PowblockchainApplicationTests {
     @Test
     void contextLoads() {
     }
-
 }

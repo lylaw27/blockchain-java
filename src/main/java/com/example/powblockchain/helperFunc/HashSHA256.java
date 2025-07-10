@@ -1,5 +1,7 @@
 package com.example.powblockchain.helperFunc;
 
+import com.example.powblockchain.Transaction;
+import com.example.powblockchain.TransactionOrBuilder;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.MessageOrBuilder;
 import com.google.protobuf.util.JsonFormat;

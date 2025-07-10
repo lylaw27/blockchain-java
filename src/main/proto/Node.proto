@@ -16,8 +16,11 @@ service Node{
 message Version {
   uint32 version = 1;
   int32 height = 2;
-  string listenAddr = 3;
-  repeated string peer = 4;
+  string ipAddr = 3;
+  int32 grpcPort = 4;
+  int32 restPort = 5;
+  string nodeId = 6;
+  repeated string peer = 7;
 }
 
 message Void{ }
@@ -52,7 +55,7 @@ message Transaction {
   string TxID = 1;
   repeated TxInput inputs = 2;
   repeated TxOutput outputs = 3;
-  string listenAddr = 4;
+  string ipAddr = 4;
 }
 
 message UTXOList{
@@ -69,12 +72,12 @@ message WalletInfo{
 }
 
 message BlockIndex{
-  string listenAddr = 1;
+  string ipAddr = 1;
   int32 index = 2;
 }
 
 message TxID{
-  string listenAddr = 1;
+  string ipAddr = 1;
   string TxID = 2;
 }
 

@@ -10,7 +10,5 @@ public class PowblockchainApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(PowblockchainApplication.class, args);
-        Network network = SpringContext.getBean(Network.class);
-        network.start();
     }
 }

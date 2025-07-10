@@ -60,6 +60,9 @@ public class Mempool {
         AtomicLong outputAmount = new AtomicLong();
         boolean parentTx = true;
 
+        System.out.println(incomingIp);
+        System.out.println(serverIp);
+
         if(tx.getInputsCount() < 1 || tx.getOutputsCount() < 1) {
             throw new Exception("Incomplete Tx data!");
         }
@@ -95,7 +98,7 @@ public class Mempool {
                         ManagedChannel channel = ManagedChannelBuilder.forAddress(ipAndPort[0], Integer.parseInt(ipAndPort[1])).usePlaintext().build();
                         NodeGrpc.NodeBlockingStub stub = NodeGrpc.newBlockingStub(channel);
                         try {
-                            TxID.Builder txRequest = TxID.newBuilder().setTxID(input.getPrevTxHash()).setListenAddr(serverIp);
+                            TxID.Builder txRequest = TxID.newBuilder().setTxID(input.getPrevTxHash()).setIpAddr(serverIp);
                             TxRes TxFound = stub.sendTransaction(txRequest.build());
                             if(TxFound.getFound()){
                                 orphanPool.put(input.getPrevTxHash(),tx);

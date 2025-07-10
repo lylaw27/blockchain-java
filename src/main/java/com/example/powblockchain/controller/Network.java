@@ -9,19 +9,37 @@ import org.springframework.web.bind.annotation.*;
 import java.util.ArrayList;
 import java.util.HashSet;
 
-@CrossOrigin(origins = "http://127.0.0.1/")
 @Controller
+@CrossOrigin(origins = "*")
 public class Network {
 
-    @Autowired
     Node node;
 
     volatile boolean generatingTx = false;
 
-    @RequestMapping(value = "/node/{ipAddress}", method = RequestMethod.POST)
+    ArrayList<Wallet> payers;
+
+    @Autowired
+    public Network(Node node) {
+        this.node = node;
+        payers = new ArrayList<>();
+        payers.add(node.getWallet());
+    }
+
+    @RequestMapping(value = "/connect/{ipAddress}", method = RequestMethod.POST)
+    @ResponseBody
     public String initiateConnection(@PathVariable String ipAddress){
+        String[] ipAndPort = ipAddress.split(":");
+        int port;
+        if(ipAndPort.length == 2){
+            port = Integer.parseInt(ipAndPort[1]);
+        }
+        else{
+            port = 50051;
+        }
         try{
-            node.connect(ipAddress);
+            System.out.println("Connecting to " + ipAndPort[0] + ":" + port);
+            node.connect(ipAndPort[0],port);
         }
         catch(Exception e){
             return "error";
@@ -29,37 +47,32 @@ public class Network {
         return "connected to :" + ipAddress;
     }
 
-    @RequestMapping(value = "/mine", method = RequestMethod.POST)
-    public String initiateMining(){
-        node.resetMining();
-        return "Started Mining!";
-    }
-
-    @RequestMapping(value = "/generateTx", method = RequestMethod.POST)
-    public String toggleTxGeneration(){
-        generatingTx = true;
-        new Thread(this::generateTx).start();
-        return "Generating Transactions!";
-    }
-
-    public void start() {
-
-        try {
-            Thread.sleep(1000);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
+    @RequestMapping(value = "/gentx", method = RequestMethod.POST)
+    @ResponseBody
+    public boolean toggleTxGeneration(){
+        if(generatingTx || node.getChain().getHeight() == -1){
+            System.out.println(node.getId() + " stopped generating transactions!");
+            generatingTx = false;
+            return false;
         }
-        node.startServer();
-        payers.add(node.getWallet());
+        else{
+            System.out.println(node.getId() + " is generating transactions!");
+            generatingTx = true;
+            new Thread(this::generateTx).start();
+            return true;
+        }
     }
 
-    ArrayList<Wallet> payers = new ArrayList<>();
+    @RequestMapping(value = "/gentx", method = RequestMethod.GET)
+    @ResponseBody
+    public boolean getTxGeneration(){
+        return generatingTx;
+    }
+
 
     //Generate Random Transactions
     synchronized void generateTx(){
         HashSet<String> payeesSet = new HashSet<>();
-
-//        node.getWalletMap().put(node.getWallet().getAddress(),node.getWallet());
 
         while(generatingTx){
             payeesSet.addAll(node.getChain().getWalletMap().keySet());
@@ -75,7 +88,7 @@ public class Network {
             int luck = (int) (Math.random() * 4);
             if(luck == 0){
                 Wallet newWallet = new Wallet();
-                newWallet.connect(node.getServerIp());
+                newWallet.connect(node.getVersion().getIpAddr()+":"+node.getVersion().getGrpcPort());
                 payers.add(newWallet);
                 payees.add(newWallet.getAddress());
                 payeeIdx = payees.size()-1;
@@ -83,18 +96,15 @@ public class Network {
 
             //randomize payment amount
             int amount = (int) (Math.random() * payers.get(payerIdx).getBalance())+1;
+
             //randomize fee from 1-10sats
             int fee = (int) (Math.random() * 10);
+
             //Create payment every 500ms
-            boolean txResponse;
+            payers.get(payerIdx).createTx(payees.get(payeeIdx), amount,fee);
 
-            txResponse = payers.get(payerIdx).createTx(payees.get(payeeIdx), amount,fee);
-
-            if(txResponse) {
-                System.out.println("Wallet:" + payerIdx + "->" + "Wallet:" + payeeIdx + "---" + "amount:" + amount + "sats" + "---" + "fee:" + fee);
-            }
-//            else{
-//                generateTx();
+//            if(txResponse) {
+//                System.out.println("Wallet:" + payerIdx + "->" + "Wallet:" + payeeIdx + "---" + "amount:" + amount + "sats" + "---" + "fee:" + fee);
 //            }
             try {
                 Thread.sleep(3000);

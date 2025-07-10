@@ -7,30 +7,34 @@ import com.example.powblockchain.Version;
 import com.example.powblockchain.helperFunc.GrpcStatus;
 import com.example.powblockchain.model.Node;
 
-import com.example.powblockchain.model.Wallet;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
-import org.springframework.beans.factory.annotation.Autowired;
-
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.annotation.SubscribeMapping;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 import java.util.*;
 
-@CrossOrigin(origins = "*")
 @Controller
+@CrossOrigin(origins = "*")
 public class NodeController {
 
     private final SimpMessagingTemplate template;
 
     @Autowired
     Node node;
+
+    @Value("${server.port}")
+    int restPort;
 
     @Autowired
     public NodeController(SimpMessagingTemplate template) {
@@ -53,16 +57,16 @@ public class NodeController {
         int i = txIdList.size()-1;
         while(i > -1 && responseArray.length()<10) {
             try {
-                JSONObject txJson;
-                jsonString = JsonFormat.printer().print(txMap.get(txIdList.get(i)));
-                txJson = new JSONObject(jsonString);
-                responseArray.put(txJson);
+                Transaction tx = txMap.get(txIdList.get(i));
+                jsonString = JsonFormat.printer().print(tx);
+                JSONObject jsonObject = new JSONObject(jsonString);
+                responseArray.put(jsonObject);
             } catch (InvalidProtocolBufferException | JSONException e) {
                 throw new RuntimeException(e);
             }
             i--;
         }
-        template.convertAndSend("/node/" + node.getVersion().getListenAddr() + "/transactions", responseArray.toString());
+        template.convertAndSend("/node/transactions", responseArray.toString());
     }
 
     public void sendBlocks() {
@@ -84,20 +88,21 @@ public class NodeController {
             }
             i--;
         }
-        template.convertAndSend("/node/" + node.getId() + "/blocks", responseArray.toString());
+        template.convertAndSend("/node/blocks", responseArray.toString());
     }
 
+    @Scheduled(fixedRate = 1000)
     public void sendPeerList() {
         HashMap<String, Version> peers = node.getPeers();
         JSONArray responseArray = new JSONArray();
-        peers.forEach((port, version) -> {
+        peers.forEach((ipAddress, version) -> {
             JSONObject peerJson = new JSONObject();
-            ManagedChannel channel = ManagedChannelBuilder.forAddress("127.0.0.1", Integer.parseInt(port)).usePlaintext().build();
+            ManagedChannel channel = ManagedChannelBuilder.forAddress(version.getIpAddr(), version.getGrpcPort()).usePlaintext().build();
             boolean status = GrpcStatus.checkConnection(channel);
             try {
-                peerJson.put("node", port);
+                peerJson.put("node",version.getNodeId());
+                peerJson.put("ip", version.getIpAddr()+":"+version.getRestPort());
                 peerJson.put("status", Boolean.toString(status));
-                peerJson.put("height", version.getHeight());
             } catch (JSONException e) {
                 return;
             } finally {
@@ -105,7 +110,7 @@ public class NodeController {
             }
             responseArray.put(peerJson);
         });
-        template.convertAndSend("/node/" + node.getVersion().getListenAddr() + "/peers", responseArray.toString());
+        template.convertAndSend("/node/peers", responseArray.toString());
     }
 
     public void sendWalletList() {
@@ -116,30 +121,38 @@ public class NodeController {
             walletArray.put(wallets.get(i));
             i--;
         }
-        template.convertAndSend("/node/" + node.getVersion().getListenAddr() + "/wallets", walletArray.toString());
+        template.convertAndSend("/node/wallets", walletArray.toString());
     }
 
-    @RequestMapping(value = "/node/status", method = RequestMethod.POST)
+    @RequestMapping(value = "/status", method = RequestMethod.GET)
     @ResponseBody
-    public Boolean triggerNodeStatus(){
-        if(node.getServer().isShutdown()){
-            node.startServer();
-            new Thread(node::startMining).start();
-            //Connect to one of the saved peer
-            for(String peer : node.getVersion().getPeerList()){
-                if(node.connect(peer)){
-                    break;
-                }
-            }
+    public String nodeStatus(){
+        return node.getVersion().getNodeId();
+    }
+
+    @RequestMapping(value = "/mine", method = RequestMethod.POST)
+    @ResponseBody
+    public boolean toggleMining(){
+        if(node.getMining()){
+            System.out.println(node.getId() + " stopped mining!");
+            node.stopMining();
+            return false;
         }
         else{
-            node.disconnectNode();
+            System.out.println(node.getId() + " is mining!");
+            node.resetMining();
+            return true;
         }
-        System.out.println(node.getServer().isShutdown());
-        return !node.getServer().isShutdown();
     }
 
-    @RequestMapping(value = "/node/block/{blockHeight}", method = RequestMethod.GET)
+    @RequestMapping(value = "/mine", method = RequestMethod.GET)
+    @ResponseBody
+    public boolean miningStatus(){
+        return node.getMining();
+    }
+
+
+    @RequestMapping(value = "/block/{blockHeight}", method = RequestMethod.GET)
     @ResponseBody
     public String getBlockInfo(@PathVariable String blockHeight){
         Block block = node.getChain().getBlockByIndex(Integer.parseInt(blockHeight));
@@ -152,16 +165,16 @@ public class NodeController {
         return jsonString;
     }
 
-    @RequestMapping(value = "/node/transaction/{TxID}", method = RequestMethod.GET)
+    @RequestMapping(value = "/transaction/{TxID}", method = RequestMethod.GET)
     @ResponseBody
-    public String getTxInfo(@PathVariable String TxID){
+    public String getTxInfo(@PathVariable String TxID) throws JSONException {
+        JSONObject jsonObject;
         if(node.getChain().getTxMap().containsKey(TxID)){
             String TxLocation = node.getChain().getTxMap().get(TxID);
             String blockHash = TxLocation.substring(0,64);
             int TxIndex = Integer.parseInt(TxLocation.substring(65));
             Block block = node.getChain().getBlockMap().get(blockHash);
             Transaction tx = block.getTransactions(TxIndex);
-            JSONObject jsonObject;
             try {
                 String jsonString = JsonFormat.printer().print(tx);
                 jsonObject = new JSONObject(jsonString);
@@ -169,11 +182,9 @@ public class NodeController {
             } catch (InvalidProtocolBufferException | JSONException e) {
                 throw new RuntimeException(e);
             }
-            return jsonObject.toString();
         }
         else if(node.getPool().getTxPool().containsKey(TxID)){
             Transaction tx = node.getPool().getTxPool().get(TxID);
-            JSONObject jsonObject;
             try {
                 String jsonString = JsonFormat.printer().print(tx);
                 jsonObject = new JSONObject(jsonString);
@@ -181,9 +192,12 @@ public class NodeController {
             } catch (InvalidProtocolBufferException | JSONException e) {
                 throw new RuntimeException(e);
             }
-            return jsonObject.toString();
         }
-        return null;
+        else{
+            jsonObject = new JSONObject();
+            jsonObject.put("block","-2");
+        }
+        return jsonObject.toString();
     }
 
     @RequestMapping(value = "/wallet/{address}", method = RequestMethod.GET)
@@ -223,7 +237,7 @@ public class NodeController {
                 try {
                     walletJson.put("address", address);
                     walletJson.put("balance", balance);
-                    walletJson.put("node", node.getVersion().getListenAddr());
+                    walletJson.put("node", node.getId());
                     JSONArray txArray = new JSONArray();
                     if(memPoolSet != null){
                         for(String tx : memPoolSet){

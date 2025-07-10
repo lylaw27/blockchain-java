@@ -6,50 +6,64 @@ import com.example.powblockchain.controller.NodeController;
 import com.example.powblockchain.helperFunc.HashSHA256;
 import com.example.powblockchain.model.Mempool;
 import com.example.powblockchain.model.Node;
-import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
+import io.grpc.Server;
+import io.grpc.ServerBuilder;
 import io.grpc.stub.StreamObserver;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;
 
-//@Component
+@Service
 public class TransactionService extends NodeGrpc.NodeImplBase{
 
-//    @Autowired
     Node node;
 
-//    @Autowired
-//    NodeController wsController;
+    @Autowired
+    NodeController nodeController;
 
-    public TransactionService(Node node) {
-
+    @Autowired
+    public TransactionService(@Value("${grpc.port}") int port, Node node) {
         this.node = node;
+        try {
+             Server server = ServerBuilder.forPort(port)
+                    .addService(this)
+                    .build()
+                    .start();
+            node.setServer(server);
+            System.out.println("Server started, listening on " + port);
+//            wallet.connect(serverIp);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Override
     public void handleTransaction(Transaction txWithIp, StreamObserver<Void> responseObserver) {
         responseObserver.onNext(Void.getDefaultInstance());
         responseObserver.onCompleted();
-        String incomingIp = txWithIp.getListenAddr();
-        Transaction txRequest = txWithIp.toBuilder().clearListenAddr().build();
+        String incomingIp = txWithIp.getIpAddr();
+        Transaction txRequest = txWithIp.toBuilder().clearIpAddr().build();
+
         String txID = HashSHA256.hashObject(txRequest);
+
         Mempool mempool = node.getPool();
 
         //Make sure one transaction gets processed each time
         synchronized (this) {
         try{
-            if (!mempool.has(txID) && mempool.validateTx(txRequest,node.getChain().getUTXO(),incomingIp, node.getServerIp())) {
-    //            System.out.println("tx sent to: " + node.getVersion().getListenAddr() + " Hash: " + txID);
-//                wsController.sendTransactions();
+            String fullIp = node.getServerIp()+":"+node.getRpcPort();
+            if (!mempool.has(txID) && mempool.validateTx(txRequest,node.getChain().getUTXO(),incomingIp, fullIp)) {
+    //            System.out.println("tx sent to: " + node.getVersion().getIpAddr() + " Hash: " + txID);
+                nodeController.sendTransactions();
                 mempool.addTx(txRequest);
 
                 //If orphan pool contains child transaction, validate child again
                 if(mempool.getOrphanPool().containsKey(txID)){
-                    node.sendTx(mempool.getOrphanPool().get(txID), node.getServerIp());
+                    node.sendTx(mempool.getOrphanPool().get(txID), fullIp);
                 }
 
                 node.broadcastTx(txRequest);
@@ -68,25 +82,25 @@ public class TransactionService extends NodeGrpc.NodeImplBase{
         synchronized (this) {
             String blockHash = HashSHA256.hashObject(blockRequest.getHeader());
             if (!node.getChain().has(blockHash)  || node.getChain().getHeight() == -1){
-                System.out.println("Block sent to: " + node.getVersion().getListenAddr() + " Hash: " + blockHash);
+                System.out.println("Block sent to: " + node.getVersion().getIpAddr() + " Hash: " + blockHash);
                 node.getChain().getBlockMap().put(blockHash, blockRequest);
                 try{
                     //Check if incoming block is extendable to the main chain
-                    if(node.getChain().validateHeader(blockRequest) || node.getChain().getHeight() == -1){
+                    if(node.getChain().validateHeader(blockRequest)){
                         if(node.getChain().validateBlock(blockRequest)){
                             node.appendBlock(blockRequest);
-//                            wsController.sendBlocks();
-                            System.out.println(node.getVersion().getListenAddr() + ": added block to main: " + blockHash);
+                            nodeController.sendBlocks();
+                            System.out.println(node.getVersion().getIpAddr() + ": added block to main: " + blockHash);
                         }
                     }
                     else{
                         //Check if incoming block is able to create a fork chain
                         if(node.getChain().createFork(blockRequest)){
-                            System.out.println(node.getVersion().getListenAddr() + ": Fork created at " + node.getChain().getFork().getHeight());
+                            System.out.println(node.getVersion().getIpAddr() + ": Fork created at " + node.getChain().getFork().getHeight());
                         }
                         //Check if incoming block is extendable to the fork chain
                         if(node.getChain().extendFork(blockRequest)){
-                            System.out.println(node.getVersion().getListenAddr() + ": added block to fork: " + blockHash);
+                            System.out.println(node.getVersion().getIpAddr() + ": added block to fork: " + blockHash);
 
                             //Reorganise Chain is Fork Chain is taller than Main Chain
                             node.broadcastBlock(blockRequest);
@@ -101,23 +115,23 @@ public class TransactionService extends NodeGrpc.NodeImplBase{
                                 node.getPool().getTxIdList().clear();
                                 node.getPool().getPoolUTXO().clear();
                                 node.resetMining();
-                                System.out.println(node.getVersion().getListenAddr() + ": Chain reorganised to height " + node.getChain().getHeight());
+                                System.out.println(node.getVersion().getIpAddr() + ": Chain reorganised to height " + node.getChain().getHeight());
                             }
                         }
                         //Store as Orphan Block if block arrived early
                         else if(node.addOrphanBlock(blockRequest)){
-                            System.out.println(node.getVersion().getListenAddr() + ": Orphan Block is found and stored");
+                            System.out.println(node.getVersion().getIpAddr() + ": Orphan Block is found and stored");
                         }
                     }
                     //Check if Orphan Block can be inserted to chains
                     if(node.checkOrphan()){
-                        System.out.println(node.getVersion().getListenAddr() + ": Orphan Blocks is inserted");
+                        System.out.println(node.getVersion().getIpAddr() + ": Orphan Blocks is inserted");
                     }
                     node.getVersion().setHeight(node.getChain().getHeight());
                     System.out.println("Block Height is now: " + node.getChain().getHeight());
                 }
                 catch(Exception e){
-                    System.out.println(node.getVersion().getListenAddr() + ":" + e.getMessage());
+                    System.out.println(node.getVersion().getIpAddr() + ":" + e.getMessage());
                 }
             }
         }
@@ -126,7 +140,8 @@ public class TransactionService extends NodeGrpc.NodeImplBase{
     @Override
     public void handshake(Version request, StreamObserver<Version> responseObserver){
         node.addPeer(request);
-        node.getPeers().forEach((ipAddress,v)->{
+        node.getPeers().forEach((ipAddress,version)->{
+            node.checkIncomingHeight(version);
             node.getVersion().addPeer(ipAddress);
         });
         responseObserver.onNext(node.getVersion().build());
@@ -137,7 +152,7 @@ public class TransactionService extends NodeGrpc.NodeImplBase{
     public void handleWallet(WalletInfo request, StreamObserver<Void> responseObserver){
         node.getWalletList().add(request.getAddress());
         node.getChain().getWalletMap().put(request.getAddress(),new HashSet<>());
-//        wsController.sendWalletList();
+        nodeController.sendWalletList();
         responseObserver.onNext(Void.getDefaultInstance());
         responseObserver.onCompleted();
     }
@@ -163,7 +178,7 @@ public class TransactionService extends NodeGrpc.NodeImplBase{
 
     public void sendBlock(BlockIndex message, StreamObserver<Void> responseObserver){
         int index = message.getIndex();
-        node.sendBlock(node.getChain().getBlockByIndex(index),message.getListenAddr());
+        node.sendBlock(node.getChain().getBlockByIndex(index),message.getIpAddr());
         responseObserver.onNext(Void.getDefaultInstance());
         responseObserver.onCompleted();
     }
@@ -174,7 +189,7 @@ public class TransactionService extends NodeGrpc.NodeImplBase{
             responseObserver.onNext(TxRes.newBuilder().setFound(true).build());
             responseObserver.onCompleted();
             Transaction tx = node.getPool().getTxPool().get(TxID);
-            node.sendTx(tx,message.getListenAddr());
+            node.sendTx(tx,message.getIpAddr());
         }
         else{
             responseObserver.onNext(TxRes.newBuilder().setFound(false).build());
