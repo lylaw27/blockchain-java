@@ -14,6 +14,11 @@ A full-featured Proof of Work (PoW) blockchain implementation in Java, designed 
 - Robust chain reorganization handling
 - Blockchain Explorer (Frontend Project) to enquire the current state of the blockchain
 
+## 🔗 Links
+
+- [Demo](http://13.214.144.114/)
+- [Frontend Repository](https://github.com/lylaw27/Blockchain-Explorer)
+
 ## Features
 
 ### 1. Node-to-Node Communication (gRPC)
@@ -22,7 +27,7 @@ A full-featured Proof of Work (PoW) blockchain implementation in Java, designed 
 ```proto
 syntax = "proto3";
 
-option java_package = "com.example.modular_blockchain";
+option java_package = "com.example.powblockchain";
 option java_multiple_files = true;
 
 service Node{
@@ -31,14 +36,18 @@ service Node{
   rpc HandleBlock(Block) returns (Void){};
   rpc HandleBalance(WalletInfo) returns (UTXOList){};
   rpc HandleWallet(WalletInfo) returns (Void){}
-  rpc RequestBlock(BlockIndex) returns (Void){};
+  rpc SendBlock(BlockIndex) returns (Void){};
+  rpc SendTransaction(TxID) returns (TxRes){};
 }
 
 message Version {
   uint32 version = 1;
   int32 height = 2;
-  string listenAddr = 3;
-  repeated string peer = 4;
+  string ipAddr = 3;
+  int32 grpcPort = 4;
+  int32 restPort = 5;
+  string nodeId = 6;
+  repeated string peer = 7;
 }
 
 message Void{ }
@@ -73,6 +82,7 @@ message Transaction {
   string TxID = 1;
   repeated TxInput inputs = 2;
   repeated TxOutput outputs = 3;
+  string ipAddr = 4;
 }
 
 message UTXOList{
@@ -89,8 +99,17 @@ message WalletInfo{
 }
 
 message BlockIndex{
-  Version version = 1;
+  string ipAddr = 1;
   int32 index = 2;
+}
+
+message TxID{
+  string ipAddr = 1;
+  string TxID = 2;
+}
+
+message TxRes {
+  bool found = 1;
 }
 ```
 
@@ -796,56 +815,68 @@ public boolean checkOrphan(){
    git clone https://github.com/lylaw27/blockchain-java.git
    cd blockchain-java
 
-
-2. Build the project:
+2. Build the project & compile protobuf file:
    ```bash
    mvn clean install
    ```
 
-3. Generate gRPC code:
-   ```bash
-   mvn compile
-   ```
-
 ## Configuration
 Edit config.properties to configure:
-- Network port
-- Peer connections
+- Coinbase Amount
 - Mining difficulty
-- Block time target
-- Mempool settings
+- Node ID/Name
+- HTTP 1.1 port
+- HTTP2/gRPC port
 
 Example configuration:
 properties
-node.port=50051
-peer.nodes=192.168.1.2:50051,192.168.1.3:50051
-mining.difficulty=18
-block.target.time=60000
-mempool.max.size=10000
-
+spring.application.name=blockchainGG
+spring.profiles.active=dev
+coinbase.amount=100000
+mining.difficulty=5
+node.id=mainnet
+server.port=8080
+grpc.port=50051
 
 ## Running the Node
 Start a node with:
-bash
-mvn exec:java -Dexec.mainClass="com.blockchain.NodeMain"
-
-
-### Command Line Options
-- --mine: Enable mining mode
-- --port: Specify custom port
-- --peers: Override configured peers
-- --genesis: Initialize new genesis block
+```bash
+java -jar target/powblockchain-0.0.1.jar
+```
 
 ## API Documentation
 The node exposes gRPC services for:
-- Submitting transactions
-- Submitting blocks
-- Querying blockchain state
-- Querying wallet balance
-- Peer status
-
+- Broadcasting transactions
+- Broadcasting blocks
+- Node-to-node handshake
+- Handling incoming blocks
+- Handling incoming transactions
+- Requesting for wallet balance
+- Handling new wallet connections
 See src/main/proto/Node.proto for service definitions.
 
+The node exposes REST API services for:
+```http
+POST /connect/{ipAddress}: Establish peer connection with peer ip address
+
+POST /mine: Toggle mining
+
+POST /gentx: Toggle transaction generations
+
+GET /mine: Get node mining status
+
+GET /gentx: Get transaction generation status
+
+GET /block/{blockHeight}: Get Block details by block height
+
+GET /transaction/{TxID}: Get Transaction details by transaction hash
+
+GET /wallet/{address}: Get wallet details by wallet address
+```
+
+## Deployment
+This application is currently running on 3 nodes. All are containerized with Docker and deployed to AWS ECS.
+New nodes can be deployed anywhere and join the network by connecting to any participating node.
 
 ## Contributing
 1. Fork the repository
@@ -856,7 +887,7 @@ See src/main/proto/Node.proto for service definitions.
 MIT License
 
 ## Future Work
-- Wallet integration
+- Wallet integration that can make transactions
 - Smart contract support
 - Performance optimizations
 - Additional consensus mechanisms
