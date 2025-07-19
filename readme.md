@@ -16,7 +16,7 @@ A full-featured Proof of Work (PoW) blockchain implementation in Java, designed 
 
 ## 🔗 Links
 
-- [Demo](http://13.212.165.255/)
+- [Demo](http://54.151.56.118/)
 - [Frontend Repository](https://github.com/lylaw27/Blockchain-Explorer)
 
 ## Features
